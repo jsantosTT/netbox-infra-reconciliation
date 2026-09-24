@@ -1,0 +1,100 @@
+---
+description: Tool and command execution discipline — file tools vs bash, bounded search safety, remote file operations, and basic service/infrastructure handling. Always active.
+globs:
+alwaysApply: true
+---
+
+# Tool & Command Execution
+
+You have specialized tools for file operations — they're built for this environment and handle permissions correctly, don't hang, and manage resources well. Use them instead of bash commands for file work.
+
+**The core principle:** Bash is for running system commands. File operations have dedicated tools. Don't work around the tools by using sed/awk/echo when you have proper file editing capabilities.
+
+**Why this matters:** File operation tools are transactional and atomic. Bash commands like sed or echo to files can fail partway through, have permission issues, or exhaust resources. The built-in tools prevent these problems.
+
+**What this looks like in practice:**
+
+When you need to read a file, use your file reading tool — not `cat` or `head`. When you need to edit a file, use your file editing tool — not `sed` or `awk`. When you need to create a file, use your file writing tool — not `echo >` or `cat <<EOF`.
+
+<examples>
+❌ Bad: sed -i 's/old/new/g' config.js
+✅ Good: Use edit tool to replace "old" with "new"
+
+❌ Bad: echo "exports.port = 3000" >> config.js
+✅ Good: Use edit tool to add the line
+
+❌ Bad: cat <<EOF > newfile.txt
+✅ Good: Use write tool with content
+
+❌ Bad: cat package.json | grep version
+✅ Good: Use read tool, then search the content
+</examples>
+
+**The pattern is simple:** If you're working with file content (reading, editing, creating, searching), use the file tools. If you're running system operations (git, package managers, process management, system commands), use bash. Don't try to do file operations through bash when you have proper tools for it.
+
+**Practical habits:**
+- Use absolute paths for file operations (avoids "which directory am I in?" confusion)
+- Run independent operations in parallel when you can
+- Don't use commands that hang indefinitely (tail -f, pm2 logs without limits) — use bounded alternatives or background jobs
+
+## Intelligent File & Content Searching
+
+**Use bounded, specific searches to avoid resource exhaustion.** Unbounded searches can loop infinitely, especially when searching for files that don't exist (like .bak files after cleanup), and this can cause system-wide resource exhaustion.
+
+<search_safety_principles>
+Key practices:
+- Use head_limit to cap results (typically 20-50)
+- Specify path parameter when possible
+- Don't search for files you just deleted/moved
+- If Glob/Grep returns nothing, don't retry the exact same search
+- Start narrow, expand gradually if needed
+- Verify directory structure first with ls before searching
+
+Grep tool modes:
+- files_with_matches (default, fastest) — just list files
+- content — show matching lines with context
+- count — count matches per file
+
+Progressive search: Start specific → recursive in likely dir → broader patterns → case-insensitive/multi-pattern. Don't repeat exact same search hoping for different results.
+</search_safety_principles>
+
+## Service & Infrastructure
+
+**Long-running operations:** If something takes more than a minute, run it in the background. Check on it periodically. Don't block waiting for completion — mark it done only when it actually finishes.
+
+**Port conflicts:** If a port is already in use, kill the process using it before starting your new one. Verify the port is actually free before proceeding.
+
+**External services:** Use proper CLI tools and APIs. You have credentials for a reason — use them (see `030-credentials-infra.mdc`). Don't scrape web UIs when APIs exist (GitHub has `gh` CLI, CI/CD systems have their own tools).
+
+## Remote File Operations
+
+**Remote editing is error-prone and slow.** Bring files local for complex operations.
+
+**The pattern:** Download (`scp`) → Edit locally with proper tools → Upload (`scp`) → Verify.
+
+**Why this matters:** When you edit files remotely via SSH commands, you can't use your file operation tools. You end up using sed/awk/echo through SSH, which can fail partway through, has no rollback, and leaves you with no local backup.
+
+**What this looks like in practice:**
+
+<bad_examples>
+❌ ssh user@host "cat /path/to/config.js"  # Then manually parse output
+❌ ssh user@host "sed -i 's/old/new/g' /path/to/file.js"
+❌ ssh user@host "echo 'line' >> /path/to/file.js"
+❌ ssh user@host "cat <<EOF > /path/to/file.js"
+</bad_examples>
+
+<good_examples>
+✅ scp user@host:/path/to/config.js /tmp/config.js → Read locally → Work with it
+✅ scp user@host:/path/to/file.js /tmp/ → Edit locally → scp /tmp/file.js user@host:/path/to/
+✅ Download → Use proper file tools → Upload → Verify
+</good_examples>
+
+**Think about what you're doing:** If you're working with file content — editing, analyzing, searching, multi-step changes — bring it local. If you're checking system state — file existence, permissions, process status — SSH is fine. The question is whether you're working with content or checking state.
+
+**Best practices:**
+- Use temp directories for downloaded files
+- Backup before modifications: `ssh user@server 'cp file file.backup'`
+- Verify after upload: compare checksums or line counts
+- Handle permissions: `scp -p` preserves permissions
+
+**Error recovery:** If remote ops fail midway, stop immediately. Restore from backup, download current state, fix locally, re-upload complete corrected files, test thoroughly.

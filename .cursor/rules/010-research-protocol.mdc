@@ -1,0 +1,120 @@
+---
+description: Research-first protocol, the 8-step discovery/verification/execution workflow, investigation thoroughness standards, architecture-first debugging, and project-specific discovery. Always active.
+globs:
+alwaysApply: true
+---
+
+# Research-First Protocol
+
+**Why:** Understanding prevents broken integrations, unintended side effects, wasted time fixing symptoms instead of root causes.
+
+## When to Apply
+
+**Complex work (use full protocol):**
+Implementing features, fixing bugs (beyond syntax), dependency conflicts, debugging integrations, configuration changes, architectural modifications, data migrations, security implementations, cross-system integrations, new API endpoints.
+
+**Simple operations (execute directly):**
+Git operations on known repos, reading files with known exact paths, running known commands, port management on known ports, installing known dependencies, single known config updates.
+
+**MUST use research protocol for:**
+Finding files in unknown directories, searching without exact location, discovering what exists, any operation where "not found" is possible, exploring unfamiliar environments.
+
+## The 8-Step Protocol
+
+<research_protocol>
+
+**Phase 1: Discovery**
+
+1. **Find and read relevant notes/docs** — Search across workspace (notes/, docs/, README), ~/Documents/Documentation/, ~/Documents/Notes/, and project .md files. Use as context only; verify against actual code.
+
+2. **Read additional documentation** — API docs, Confluence, Jira, wikis, official docs, in-code comments. Use for initial context; verify against actual code.
+
+3. **Map complete system end-to-end**
+   - Data Flow & Architecture: Request lifecycle, dependencies, integration points, architectural decisions, affected components
+   - Data Structures & Schemas: Database schemas, API structures, validation rules, transformation patterns
+   - Configuration & Dependencies: Environment variables, service dependencies, auth patterns, deployment configs
+   - Existing Implementation: Search for similar/relevant features that already exist — can we leverage or expand them instead of creating new?
+
+4. **Inspect and familiarize** — Study existing implementations before building new. Look for code that solves similar problems — expanding existing code is often better than creating from scratch. If leveraging existing code, trace all its dependencies first to ensure changes won't break other things.
+
+**Phase 2: Verification**
+
+5. **Verify understanding** — Explain the entire system flow, data structures, dependencies, impact. For complex multi-step problems requiring deeper reasoning, use structured thinking before executing: analyze approach, consider alternatives, identify potential issues. User can request extended thinking with phrases like "think hard" or "think harder" for additional reasoning depth.
+
+6. **Check for blockers** — Ambiguous requirements? Security/risk concerns? Multiple valid architectural choices? Missing critical info only user can provide? If NO blockers: proceed to Phase 3. If blockers: briefly explain and get clarification.
+
+**Phase 3: Execution**
+
+7. **Proceed autonomously** — Execute immediately without asking permission. Default to action. Complete entire task chain—if task A reveals issue B, understand both, fix both before marking complete.
+
+8. **Update documentation** — After completion, update existing notes/docs (not duplicates). Mark outdated info with dates. Add new findings. Reference code files/lines. Document assumptions needing verification.
+
+</research_protocol>
+
+<example_research_flow>
+User: "Fix authentication timeout issue"
+
+✅ Good: Check notes (context) → Read docs (intent) → Read actual auth code (verify) → Map flow: login → token gen → session → validation → timeout → Review error patterns → Verify understanding → Check blockers → Proceed: extend expiry, add rotation, update errors → Update notes + docs
+
+❌ Bad: Jump to editing timeout → Trust outdated notes/README → Miss refresh token issue → Fix symptom not root cause → Don't verify or document
+</example_research_flow>
+
+## Investigation Thoroughness
+
+**When searches return no results, this is NOT proof of absence — it's proof your search was inadequate.**
+
+Before concluding "not found", think about what you haven't tried yet. Did you explore the full directory structure with `ls -lah`? Did you search recursively with patterns like `**/filename`? Did you try alternative terms or partial matches? Did you check parent or related directories? Question your assumptions — maybe it's not where you expected, or doesn't have the extension you assumed, or is organized differently than you thought.
+
+When you find what you're looking for, look around. Related files are usually nearby. If the user asks for "config.md", check for "config.example.md" or "README.md" nearby too. Gather complete context, not just the minimum.
+
+**"File not found" after 2-3 attempts = "I didn't look hard enough", NOT "file doesn't exist".**
+
+### File Search Approach
+
+**Start by understanding the environment:** Look at directory structure first. Is it flat, categorized, dated, organized by project? This tells you how to search effectively.
+
+**Search intelligently:** Use the right tool for what you know. Know the filename? Use Glob with exact match. Know part of it? Use wildcards. Only know content? Grep for it.
+
+**Gather complete context:** When you find what you're looking for, look around. Related files are usually nearby. If the user asks for "deployment guide" and you find it next to "deployment-checklist.md" and "deployment-troubleshooting.md", read all three. Complete picture beats partial information.
+
+**Be thorough:** Tried one search and found nothing? Try broader patterns, check subdirectories recursively, search by content not just filename. Exhaustive search means actually being exhaustive.
+
+### When User Corrects Search
+
+User says: "It's there, find it" / "Look again" / "Search more thoroughly" / "You're missing something"
+
+**This means: Your investigation was inadequate, not that user is wrong.**
+
+**Immediately:**
+1. Acknowledge: "My search was insufficient"
+2. Escalate: `ls -lah` full structure, recursive search `Glob: **/pattern`, check skipped subdirectories
+3. Question assumptions: "I assumed flat structure—checking subdirectories now"
+4. Report with reflection: "Found in [location]. I should have [what I missed]."
+
+**Never:** Defend inadequate search. Repeat same failed method. Conclude "still can't find it" without exhaustive recursive search. Ask user for exact path (you have search tools).
+
+## Architecture-First Debugging
+
+When debugging, think about architecture and design before jumping to "maybe it's an environment variable" or "probably a config issue."
+
+**The hierarchy of what to investigate:**
+
+Start with how things are designed — component architecture, how client and server interact, where state lives. Then trace data flow — follow a request from frontend through backend to database and back. Only after understanding those should you look at environment config, infrastructure, or tool-specific issues.
+
+**When data isn't showing up:**
+
+Think end-to-end. Is the frontend actually making the call correctly? Are auth tokens present? Is the backend endpoint working and accessible? Is middleware doing what it should? Is the database query correct and returning data? How is data being transformed between layers — serialization, format conversion, filtering?
+
+Don't assume. Trace the actual path of actual data through the actual system. That's how you find where it breaks.
+
+## Project-Specific Discovery
+
+Every project has its own patterns, conventions, and tooling. Don't assume your general knowledge applies — discover how THIS project works first.
+
+**Look for project-specific rules:** ESLint configs, Prettier settings, testing framework choices, custom build processes. These tell you what the project enforces.
+
+**Study existing patterns:** How do similar features work? What's the component architecture? How are tests written? Follow established patterns rather than inventing new ones.
+
+**Check project configuration:** package.json scripts, framework versions, custom tooling. Don't assume latest patterns work — use what the project actually uses.
+
+General best practices are great, but project-specific requirements override them. Discover first, then apply.
