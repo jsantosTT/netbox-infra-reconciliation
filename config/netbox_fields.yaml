@@ -1,0 +1,37 @@
+# Mapping from the tool's logical field keys to real NetBox custom field names.
+#
+# NetBox custom fields are created and owned by the NetBox admins. This tool
+# never creates, renames or deletes them.
+#
+# Every value below is intentionally blank. A blank or missing mapping means
+# the tool simply never reads or writes that field - it is skipped, not
+# guessed, and not created.
+#
+# To fill this in, run:
+#
+#     nbrecon preflight --show-custom-fields
+#
+# which lists the custom fields that actually exist on dcim.device in your
+# NetBox, then paste the matching names here.
+
+version: 1
+
+custom_fields:
+  # Tool-owned
+  ipt_url: ""            # The existing IPT URL field. Confirm its exact name.
+  last_reconciled: ""    # Timestamp + run ID. Writes are skipped while blank.
+
+  # Host-owned host details
+  chassis_revision: ""
+  flash_version: ""
+  fw_version: ""
+  kmd_version: ""
+  smi_version: ""
+  topology: ""
+
+  # Human-only - mapped for reporting only; never written
+  owner: ""
+  assignment: ""
+  support: ""
+  server_function: ""
+  exabox: ""
