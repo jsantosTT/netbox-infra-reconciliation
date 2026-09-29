@@ -1,0 +1,29 @@
+# Secrets - never commit. See .env.example for the template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Reconciliation artifacts and local state
+var/
+runs/
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.DS_Store
+*.swp
