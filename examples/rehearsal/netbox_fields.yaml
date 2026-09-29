@@ -1,0 +1,24 @@
+# Custom field mapping for the mock lab only.
+#
+# These names match the fake NetBox in tools/mock_lab.py. The real
+# config/netbox_fields.yaml ships blank on purpose: fill it from
+# `nbrecon preflight --show-custom-fields` rather than from this file.
+
+version: 1
+
+custom_fields:
+  ipt_url: "ipt_url"
+  last_reconciled: "last_reconciled"
+
+  chassis_revision: "chassis_revision"
+  flash_version: "flash_version"
+  fw_version: "fw_version"
+  kmd_version: "kmd_version"
+  smi_version: "smi_version"
+  topology: "topology"
+
+  owner: "owner"
+  assignment: "assignment"
+  support: "support"
+  server_function: "server_function"
+  exabox: "exabox"

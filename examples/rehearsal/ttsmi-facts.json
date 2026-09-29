@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "Example of the export an Ansible playbook is expected to produce.",
+    "nbrecon reads this file; it never opens an SSH session itself.",
+    "See docs/ansible-facts-schema.md for the full contract."
+  ],
+  "generated_at": "2026-09-29T08:00:00Z",
+  "hosts": {
+    "galaxy-lab-01": {
+      "groups": ["galaxy", "lab-aus", "blackhole"],
+      "tt_smi": {
+        "flash_version": "1.5.3",
+        "fw_version": "18.7.0",
+        "kmd_version": "1.31",
+        "smi_version": "3.0.12",
+        "topology": "mesh",
+        "chassis_revision": "Rev C",
+        "serial": "TT-GX-0001",
+        "trays": [
+          {"tray_id": "1", "serial": "TT-TRAY-0001", "model": "Blackhole Tray"},
+          {"tray_id": "2", "serial": "TT-TRAY-0002", "model": "Blackhole Tray"},
+          {"tray_id": "3", "serial": "TT-TRAY-0003", "model": "Blackhole Tray"},
+          {"tray_id": "4", "serial": "TT-TRAY-0004", "model": "Blackhole Tray"}
+        ]
+      }
+    }
+  }
+}

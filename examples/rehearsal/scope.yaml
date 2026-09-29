@@ -1,0 +1,18 @@
+# Rehearsal scope: exactly one server.
+#
+# An unscoped run is refused outright, and max_devices is capped again by
+# NBRECON_MAX_BATCH at runtime, so a stray command cannot reach the fleet.
+
+version: 1
+
+site: ""
+tenant: ""
+tags: []
+
+devices:
+  - galaxy-lab-01
+
+host_list: ""
+ansible_group: ""
+
+max_devices: 1
