@@ -37,6 +37,7 @@ def dump_collection(
     host_by_ip: dict[str, HostFacts],
     probe_ip_by_device: dict[int, str],
     prometheus_nodes: list[str],
+    bmc_interfaces: dict[int, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "run_id": run_id,
@@ -46,11 +47,18 @@ def dump_collection(
         "hosts": {ip: asdict(f) for ip, f in host_by_ip.items()},
         "probe_ip_by_device": {str(k): v for k, v in probe_ip_by_device.items()},
         "prometheus_nodes": sorted(prometheus_nodes),
+        # Snapshotted here rather than re-read at plan time so the MAC already
+        # on the interface is compared against, instead of looking empty.
+        "bmc_interfaces": {str(k): v for k, v in (bmc_interfaces or {}).items()},
     }
 
 
 def load_collection(payload: dict[str, Any]) -> tuple[
-    list[NetBoxDevice], dict[str, HostFacts], dict[int, str], set[str]
+    list[NetBoxDevice],
+    dict[str, HostFacts],
+    dict[int, str],
+    set[str],
+    dict[int, dict[str, Any]],
 ]:
     devices = [NetBoxDevice(**d) for d in payload.get("devices", [])]
     hosts: dict[str, HostFacts] = {}
@@ -61,7 +69,10 @@ def load_collection(payload: dict[str, Any]) -> tuple[
         hosts[ip] = HostFacts(**raw)
     probes = {int(k): v for k, v in (payload.get("probe_ip_by_device") or {}).items()}
     nodes = set(payload.get("prometheus_nodes") or [])
-    return devices, hosts, probes, nodes
+    interfaces = {
+        int(k): v for k, v in (payload.get("bmc_interfaces") or {}).items() if v
+    }
+    return devices, hosts, probes, nodes, interfaces
 
 
 def dump_pairs(pairs: list[DevicePair]) -> list[dict[str, Any]]:

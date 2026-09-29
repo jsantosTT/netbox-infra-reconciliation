@@ -86,6 +86,18 @@ def _latest_run_id(root: Path) -> str | None:
     return runs[0] if runs else None
 
 
+def _bmc_interface_name(matrix: OwnershipMatrix) -> str | None:
+    """Which NetBox interface holds the BMC MAC, according to the matrix.
+
+    Taken from the rule rather than hard-coded, so renaming the interface in
+    config/ownership.yaml is enough to change what the snapshot reads.
+    """
+    rule = matrix.by_key("bmc_mac")
+    if rule is None or not rule.enabled or rule.target_kind != "interface_mac":
+        return None
+    return rule.target_name or "bmc"
+
+
 def _resolve_run(ctx: Context, run_id: str | None) -> RunArtifacts:
     resolved = run_id or _latest_run_id(ctx.settings.run.artifact_dir)
     if not resolved:
@@ -255,10 +267,16 @@ def collect(
     console.print(f"  {len(devices)} device(s) in scope")
 
     probe_ip_by_device: dict[int, str] = {}
+    bmc_interfaces: dict[int, dict[str, Any]] = {}
+    iface_name = _bmc_interface_name(ctx.matrix)
     for device in devices:
         address = probe_address(device)
         if address:
             probe_ip_by_device[device.id] = address
+        if iface_name:
+            existing = client.find_interface(device.id, iface_name)
+            if existing:
+                bmc_interfaces[device.id] = existing
 
     console.print(f"Querying Redfish on {len(probe_ip_by_device)} BMC(s)...")
     redfish = RedfishCollector(ctx.settings.bmc)
@@ -286,7 +304,7 @@ def collect(
 
     payload = dump_collection(
         run, scope.as_dict(), ctx.settings.netbox.url, devices, host_by_ip,
-        probe_ip_by_device, list(nodes),
+        probe_ip_by_device, list(nodes), bmc_interfaces,
     )
     artifacts.write_json(COLLECTION_FILE, payload)
     store.record_run(run, "collect", str(scope.as_dict()), len(devices))
@@ -303,7 +321,7 @@ def plan(ctx: Context, run_id: str | None, show_all: bool) -> None:
     """Correlate and diff. Produces the dry-run plan. Writes nothing to NetBox."""
     artifacts = _resolve_run(ctx, run_id)
     payload = artifacts.read_json(COLLECTION_FILE)
-    devices, host_by_ip, probes, nodes = load_collection(payload)
+    devices, host_by_ip, probes, nodes, bmc_interfaces = load_collection(payload)
 
     result = correlate(devices, host_by_ip, probes)
     console.print(
@@ -329,9 +347,10 @@ def plan(ctx: Context, run_id: str | None, show_all: bool) -> None:
             except NbreconError as exc:
                 console.print(f"[yellow]Jira lookup failed for {pair.netbox.name}: {exc}[/yellow]")
         contexts[pair.netbox.id] = DeviceContext(
+            bmc_interface=bmc_interfaces.get(pair.netbox.id),
             unreachable_streak=store.consecutive_unreachable(
                 pair.netbox.name or str(pair.netbox.id)
-            )
+            ),
         )
 
     # Left unchecked at plan time so planning stays offline from the collection
