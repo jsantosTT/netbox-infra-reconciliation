@@ -201,8 +201,13 @@ def correlate(
         )
 
     # --- leftovers: hosts seen but not represented in NetBox ---------------
+    # Addresses probed on behalf of an in-scope device are reported by the
+    # device loop below, which can name the device; skip them here so a
+    # failure is not listed twice.
+    probed_addresses = set(probe_ip_by_device.values())
+
     for ip, facts in host_by_ip.items():
-        if ip in consumed_hosts:
+        if ip in consumed_hosts or ip in probed_addresses:
             continue
         if not facts.usable:
             result.collection_failures.append(
@@ -256,6 +261,19 @@ def correlate(
                     reason=UnmatchedReason.COLLECTION_FAILED,
                     identifier=device.name or f"device-{device.id}",
                     detail=f"{status.value} at {probe_ip}: {detail}",
+                    device_id=device.id,
+                    netbox_url=device.url,
+                )
+            )
+        elif normalise_serial(facts.serial) is None:
+            result.unmatched.append(
+                UnmatchedEntry(
+                    reason=UnmatchedReason.MISSING_SERIAL,
+                    identifier=device.name or f"device-{device.id}",
+                    detail=(
+                        f"BMC {probe_ip} responded but reported no serial; "
+                        "no automatic match, no writes"
+                    ),
                     device_id=device.id,
                     netbox_url=device.url,
                 )
