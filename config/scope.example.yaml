@@ -1,0 +1,32 @@
+# Scope definition - step 1 of the reconciliation flow.
+#
+# Copy, edit, and pass with:  nbrecon collect --scope-file config/scope.lab.yaml
+#
+# Selectors are combined with AND. At least one must be set; an unscoped run is
+# rejected so that a stray command can never target the whole fleet.
+
+version: 1
+
+# NetBox site slug. Start with one lab site during the pilot.
+site: ""
+
+# NetBox tenant slug.
+tenant: ""
+
+# NetBox tags. A device must carry all listed tags.
+tags: []
+
+# Explicit device names. Highest precedence; when set, the NetBox selectors
+# above are used only as a sanity filter.
+devices: []
+
+# Path to a newline-delimited host list file.
+host_list: ""
+
+# Ansible group name, resolved against the exported inventory facts rather
+# than by connecting to hosts.
+ansible_group: ""
+
+# Hard cap on how many devices a single run may touch. Never exceeds
+# NBRECON_MAX_BATCH from the environment.
+max_devices: 20

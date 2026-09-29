@@ -1,0 +1,21 @@
+# Redfish Model / PartNumber  ->  NetBox device type slug.
+#
+# Intentionally empty. Until a model appears here the tool reports it as an
+# unmapped SKU and proposes no device type change. The tool never creates
+# device types or manufacturers - that taxonomy is locked and admin-owned.
+#
+# Match order per device: part_number first, then model. Comparison is
+# case-insensitive and ignores surrounding whitespace.
+#
+# Example once populated:
+#
+# by_part_number:
+#   "TG-00002": galaxy-wormhole
+# by_model:
+#   "Galaxy Blackhole": galaxy-blackhole
+
+version: 1
+
+by_part_number: {}
+
+by_model: {}
