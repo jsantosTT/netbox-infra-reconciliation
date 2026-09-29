@@ -110,6 +110,16 @@ def test_unreachable_bmc_becomes_a_collection_failure():
     assert result.collection_failures[0].reason is UnmatchedReason.COLLECTION_FAILED
 
 
+def test_a_failed_device_is_reported_once_not_twice():
+    """The device loop names the device; the host loop must not repeat it."""
+    device = make_device()
+    host = make_host(status=CollectionStatus.UNREACHABLE, errors=["timeout"])
+    result = correlate([device], {"10.100.1.50": host}, {device.id: "10.100.1.50"})
+
+    assert len(result.collection_failures) == 1
+    assert result.collection_failures[0].device_id == device.id
+
+
 def test_host_not_in_netbox_is_reported():
     device = make_device(id=1, serial="SN-KNOWN", oob_ip="10.0.0.1/24")
     hosts = {
