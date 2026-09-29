@@ -1,0 +1,282 @@
+# Field ownership matrix - the executable form of NetBox_Field_Ownership.pdf.
+#
+# The diff engine reads this file; it has no hard-coded field rules. Changing a
+# category here changes what the tool is allowed to write.
+#
+# category:
+#   host_owned   - tool writes the value read from the server, after approval
+#   tool_owned   - tool creates / maintains the value itself
+#   human_only   - tool never writes; may suggest in the report
+#   report_only  - tool compares and flags; never writes or suggests
+#
+# policy:
+#   write          - propose whenever the collected value differs (host wins)
+#   fill_if_empty  - propose only when the NetBox side is empty; a differing
+#                    value is flagged for a human, never overwritten
+#   never          - no write path exists for this field
+#
+# on_conflict:
+#   flag               - surface in the report, take no action
+#   identity_mismatch  - treat as a correlation failure, not a diff
+#   suggest            - report a recommendation for a human to action
+#   none               - nothing to do
+#
+# Invariant enforced in code regardless of anything below: a value the
+# collectors could not determine is None, and None never produces a write.
+
+version: 1
+
+fields:
+  # --- Mandatory per-device fields ----------------------------------------
+  - key: hostname
+    label: Hostname
+    category: report_only
+    mandatory: true
+    sources: [netbox.name, redfish.hostname, prometheus.node]
+    target: { kind: attribute, name: name }
+    policy: never
+    on_conflict: flag
+    notes: >-
+      Other systems key on the hostname, so disagreement between NetBox,
+      Redfish and Prometheus is reported for a human to resolve rather than
+      auto-corrected.
+
+  - key: serial
+    label: Serial Number
+    category: host_owned
+    mandatory: true
+    sources: [redfish.serial_number]
+    target: { kind: attribute, name: serial }
+    policy: fill_if_empty
+    on_conflict: identity_mismatch
+    requires_explicit_approval: true
+    notes: >-
+      Serial is the correlation identity. A device matched only by hostname or
+      BMC IP can have its serial filled, but never through a bulk approval.
+
+  - key: device_type
+    label: Device type (TT SKU)
+    category: host_owned
+    mandatory: true
+    sources: [redfish.model, redfish.part_number]
+    target: { kind: attribute, name: device_type }
+    policy: write
+    on_conflict: flag
+    requires_mapping: sku_map
+    notes: >-
+      Resolved through config/sku_map.yaml. An unmapped model is reported and
+      never written; the tool never creates device types or manufacturers.
+
+  - key: ipt_link
+    label: IPT link in NetBox
+    category: tool_owned
+    mandatory: true
+    sources: [jira.issue_url]
+    target: { kind: custom_field, name: ipt_url }
+    policy: fill_if_empty
+    on_conflict: flag
+    notes: Pointing at a different ticket is flagged, never overwritten.
+
+  # --- Non-mandatory ------------------------------------------------------
+  - key: asset_tag
+    label: Asset tag
+    category: host_owned
+    mandatory: false
+    sources: [redfish.asset_tag]
+    target: { kind: attribute, name: asset_tag }
+    policy: fill_if_empty
+    on_conflict: flag
+
+  # --- Confirmed host-owned (the starred rows, signed off for v1) ---------
+  - key: bmc_ip
+    label: BMC / OOB IP address
+    category: host_owned
+    mandatory: false
+    sources: [redfish.bmc_ipv4]
+    target: { kind: oob_ip, name: primary_ip4_oob }
+    policy: write
+    on_conflict: host_wins
+    notes: The tool reached the BMC at this address, so the host is authoritative.
+
+  - key: bmc_mac
+    label: BMC MAC address
+    category: host_owned
+    mandatory: false
+    sources: [redfish.bmc_mac]
+    target: { kind: interface_mac, name: bmc }
+    policy: write
+    on_conflict: host_wins
+
+  - key: chassis_revision
+    label: Host detail - chassis revision
+    category: host_owned
+    mandatory: false
+    sources: [redfish.chassis_revision, ttsmi.chassis_revision]
+    target: { kind: custom_field, name: chassis_revision }
+    policy: write
+    on_conflict: host_wins
+
+  - key: fw_flash
+    label: Host detail - Flash version
+    category: host_owned
+    mandatory: false
+    sources: [ttsmi.flash_version]
+    target: { kind: custom_field, name: flash_version }
+    policy: write
+    on_conflict: host_wins
+
+  - key: fw_firmware
+    label: Host detail - FW version
+    category: host_owned
+    mandatory: false
+    sources: [ttsmi.fw_version]
+    target: { kind: custom_field, name: fw_version }
+    policy: write
+    on_conflict: host_wins
+
+  - key: fw_kmd
+    label: Host detail - KMD version
+    category: host_owned
+    mandatory: false
+    sources: [ttsmi.kmd_version]
+    target: { kind: custom_field, name: kmd_version }
+    policy: write
+    on_conflict: host_wins
+
+  - key: fw_smi
+    label: Host detail - SMI version
+    category: host_owned
+    mandatory: false
+    sources: [ttsmi.smi_version]
+    target: { kind: custom_field, name: smi_version }
+    policy: write
+    on_conflict: host_wins
+
+  - key: topology
+    label: Host detail - topology
+    category: host_owned
+    mandatory: false
+    sources: [ttsmi.topology]
+    target: { kind: custom_field, name: topology }
+    policy: write
+    on_conflict: host_wins
+
+  # --- Tool-owned bookkeeping ---------------------------------------------
+  - key: last_reconciled
+    label: Last reconciled
+    category: tool_owned
+    mandatory: false
+    sources: [tool.run]
+    target: { kind: custom_field, name: last_reconciled }
+    policy: write
+    on_conflict: none
+    notes: Timestamp plus run ID, written only on an applied run.
+
+  # --- Human-only: no write path ------------------------------------------
+  - key: status
+    label: Status
+    category: human_only
+    mandatory: true
+    sources: [netbox.status]
+    target: { kind: attribute, name: status }
+    policy: never
+    on_conflict: suggest
+    suggest_rule: unreachable_runs_threshold
+    notes: >-
+      After the configured number of consecutive unreachable runs the report
+      suggests considering Offline. The tool never writes status.
+
+  - key: owner
+    label: Owner
+    category: human_only
+    sources: [netbox.custom_field]
+    target: { kind: custom_field, name: owner }
+    policy: never
+    on_conflict: none
+
+  - key: assignment
+    label: Assignment
+    category: human_only
+    sources: [netbox.custom_field]
+    target: { kind: custom_field, name: assignment }
+    policy: never
+    on_conflict: none
+
+  - key: support
+    label: Support
+    category: human_only
+    sources: [netbox.custom_field]
+    target: { kind: custom_field, name: support }
+    policy: never
+    on_conflict: none
+
+  - key: server_function
+    label: Server function
+    category: human_only
+    sources: [netbox.custom_field]
+    target: { kind: custom_field, name: server_function }
+    policy: never
+    on_conflict: none
+    report_if_empty: true
+
+  - key: exabox
+    label: Exabox (cluster)
+    category: human_only
+    sources: [netbox.custom_field]
+    target: { kind: custom_field, name: exabox }
+    policy: never
+    on_conflict: none
+
+  - key: site
+    label: Site
+    category: human_only
+    sources: [netbox.site]
+    target: { kind: attribute, name: site }
+    policy: never
+    on_conflict: none
+
+  - key: rack
+    label: Rack
+    category: human_only
+    sources: [netbox.rack]
+    target: { kind: attribute, name: rack }
+    policy: never
+    on_conflict: none
+
+  - key: position
+    label: Rack U position
+    category: human_only
+    sources: [netbox.position]
+    target: { kind: attribute, name: position }
+    policy: never
+    on_conflict: none
+
+  # --- Report-only --------------------------------------------------------
+  - key: power_state
+    label: Power state
+    category: report_only
+    sources: [redfish.power_state]
+    target: { kind: none, name: null }
+    policy: never
+    on_conflict: none
+    notes: Never stored in NetBox; shown in the report as a liveness hint.
+
+  - key: tray_serials
+    label: Tray serials
+    category: host_owned
+    sources: [redfish.tray_serials, ttsmi.tray_serials]
+    target: { kind: none, name: null }
+    policy: never
+    enabled: false
+    on_conflict: flag
+    notes: >-
+      Collected and reported in v1 only. Modules, device bays and inventory
+      items are not modelled in NetBox yet and the tool never creates them.
+      Re-enable with a real target once the tray model is agreed.
+
+# Behaviour shared by every field.
+rules:
+  unknown_never_clears: true
+  staleness_check: true
+  fill_if_empty_never_overwrites: true
+  unreachable_runs_threshold: 3
