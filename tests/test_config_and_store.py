@@ -9,8 +9,9 @@ from nbrecon.config import CustomFieldMap, Scope, SkuMap
 from nbrecon.errors import ScopeError
 from nbrecon.models import CollectionStatus
 from nbrecon.runstore import RunStore
+from nbrecon.state import dump_collection, load_collection
 
-from .conftest import CONFIG_DIR
+from .conftest import CONFIG_DIR, make_device
 
 
 # --- scope ----------------------------------------------------------------
@@ -112,3 +113,29 @@ def test_runs_are_recorded_and_listed(tmp_path):
     runs = store.recent_runs()
     assert len(runs) == 1
     assert runs[0]["stage"] == "plan"
+
+
+# --- collection artifact --------------------------------------------------
+def test_collection_carries_the_bmc_interface():
+    """The interface holding the MAC has to survive into the plan stage.
+
+    Without it the NetBox side of bmc_mac reads as empty on every run, so a
+    MAC that already matches is proposed as a write over and over.
+    """
+    device = make_device()
+    payload = dump_collection(
+        "run-1", {}, "https://netbox.example", [device], {}, {}, [],
+        {device.id: {"id": 31, "name": "bmc", "mac_address": "aa:bb:cc:dd:ee:ff"}},
+    )
+
+    _, _, _, _, interfaces = load_collection(payload)
+
+    assert interfaces[device.id]["mac_address"] == "aa:bb:cc:dd:ee:ff"
+
+
+def test_collection_without_interfaces_still_loads():
+    """Older artifacts, and devices with no BMC interface, must not break."""
+    payload = dump_collection("run-1", {}, "https://netbox.example", [], {}, {}, [])
+    payload.pop("bmc_interfaces")
+
+    assert load_collection(payload)[4] == {}

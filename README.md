@@ -81,6 +81,22 @@ is skipped entirely rather than guessed.
 | `config/sku_map.yaml` | Redfish Model/PartNumber to NetBox device type slug | Empty; every SKU reports as unmapped |
 | `config/scope.example.yaml` | Template for a run scope | Copy and edit per site |
 
+## Rehearse
+
+Before pointing the tool at real inventory, run the whole pipeline against a
+mock NetBox and a mock Redfish BMC holding one deliberately drifted server. No
+credentials, nothing real is touched.
+
+```bash
+./tools/rehearse.sh
+```
+
+It asks for `sudo` once, because Redfish is addressed as
+`https://<bmc-ip>/redfish/v1` and the mock BMC therefore has to hold port 443.
+See [docs/running-one-server.md](docs/running-one-server.md) for what to look
+for, including how to rehearse a failed collection, a tampered plan and a
+mid-run NetBox edit.
+
 ## Run
 
 ```bash
@@ -129,7 +145,7 @@ tickets are the expected failure mode.
 
 ```bash
 ./.venv/bin/python -m pytest
-./.venv/bin/ruff check src tests
+./.venv/bin/ruff check src tests tools
 ```
 
 The test suite pins the safety invariants: unknown never clears, fill-if-empty
@@ -139,6 +155,7 @@ hand-edited plan cannot smuggle a forbidden field past the apply stage.
 
 ## Documentation
 
+- [docs/running-one-server.md](docs/running-one-server.md) - start here: install, configure, rehearse, then reconcile one server
 - [docs/pipeline.md](docs/pipeline.md) - the seven stages and what each guarantees
 - [docs/field-ownership.md](docs/field-ownership.md) - the matrix and its open items
 - [docs/ansible-facts-schema.md](docs/ansible-facts-schema.md) - the tt-smi export contract

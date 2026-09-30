@@ -1,0 +1,13 @@
+# SKU mapping for the mock lab only.
+#
+# Part number is matched before model, because it is the more specific
+# identifier. An unmapped SKU is reported and never written; the tool does not
+# create device types or manufacturers.
+
+version: 1
+
+by_part_number:
+  TT-BH-GALAXY-4U: tt-galaxy-blackhole
+
+by_model:
+  Galaxy Blackhole: tt-galaxy-blackhole
