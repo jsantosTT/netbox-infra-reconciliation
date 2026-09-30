@@ -260,6 +260,7 @@ class Scope:
 
     site: str = ""
     tenant: str = ""
+    rack: str = ""
     tags: list[str] = field(default_factory=list)
     devices: list[str] = field(default_factory=list)
     host_list: str = ""
@@ -272,6 +273,7 @@ class Scope:
         return cls(
             site=(data.get("site") or "").strip(),
             tenant=(data.get("tenant") or "").strip(),
+            rack=(data.get("rack") or "").strip(),
             tags=[str(t).strip() for t in (data.get("tags") or []) if str(t).strip()],
             devices=[str(d).strip() for d in (data.get("devices") or []) if str(d).strip()],
             host_list=(data.get("host_list") or "").strip(),
@@ -297,11 +299,19 @@ class Scope:
 
     def validate(self, max_batch: int) -> None:
         if not any(
-            [self.site, self.tenant, self.tags, self.devices, self.host_list, self.ansible_group]
+            [
+                self.site,
+                self.tenant,
+                self.rack,
+                self.tags,
+                self.devices,
+                self.host_list,
+                self.ansible_group,
+            ]
         ):
             raise ScopeError(
                 "refusing to run without a scope: set at least one of "
-                "site, tenant, tags, devices, host_list or ansible_group"
+                "site, tenant, rack, tags, devices, host_list or ansible_group"
             )
         if self.max_devices < 1:
             raise ScopeError("max_devices must be at least 1")
@@ -315,6 +325,7 @@ class Scope:
         return {
             "site": self.site,
             "tenant": self.tenant,
+            "rack": self.rack,
             "tags": self.tags,
             "devices": self.devices,
             "host_list": self.host_list,

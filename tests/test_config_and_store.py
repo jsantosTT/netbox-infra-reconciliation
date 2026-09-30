@@ -25,6 +25,20 @@ def test_scope_cannot_exceed_the_batch_cap():
         Scope(site="lab", max_devices=50).validate(max_batch=20)
 
 
+def test_rack_alone_is_a_valid_scope():
+    Scope(rack="RACK-42").validate(max_batch=20)
+
+
+def test_rack_is_read_from_the_scope_file(tmp_path):
+    path = tmp_path / "scope.yaml"
+    path.write_text("rack: RACK-42\nsite: lab-aus\n")
+
+    scope = Scope.from_file(path)
+
+    assert scope.rack == "RACK-42"
+    assert scope.as_dict()["rack"] == "RACK-42"
+
+
 def test_minimal_scope_is_accepted():
     Scope(site="lab", max_devices=10).validate(max_batch=20)
 
