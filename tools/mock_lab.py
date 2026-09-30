@@ -25,6 +25,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import ssl
 import subprocess
 import sys
@@ -406,14 +407,29 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def _self_signed_cert() -> tuple[str, str]:
+    """Generate a throwaway certificate for the mock BMC.
+
+    No subjectAltName: the mock is only ever reached with
+    NBRECON_BMC_VERIFY_TLS=false, and `-addext` does not exist in LibreSSL,
+    which is what macOS ships as `openssl`.
+    """
+    if not shutil.which("openssl"):
+        raise SystemExit(
+            "openssl not found on PATH; it is needed to generate the mock BMC "
+            "certificate. Install it, or run only the NetBox half with "
+            "--serve-netbox."
+        )
+
     tmp = Path(tempfile.mkdtemp(prefix="nbrecon-mock-bmc-"))
     cert, key = tmp / "cert.pem", tmp / "key.pem"
-    subprocess.run(
+    result = subprocess.run(
         ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
          "-keyout", str(key), "-out", str(cert), "-days", "1",
-         "-subj", "/CN=mock-bmc", "-addext", "subjectAltName=IP:127.0.0.1"],
-        check=True, capture_output=True,
+         "-subj", "/CN=mock-bmc"],
+        capture_output=True, text=True,
     )
+    if result.returncode != 0:
+        raise SystemExit(f"openssl could not generate a certificate:\n{result.stderr}")
     return str(cert), str(key)
 
 
@@ -436,7 +452,18 @@ def main() -> int:
     port = args.port or (8000 if mode == "netbox" else 443)
 
     handler = type("Handler", (_Handler,), {"mode": mode, "state": initial_state()})
-    server = ThreadingHTTPServer((args.host, port), handler)
+    try:
+        server = ThreadingHTTPServer((args.host, port), handler)
+    except PermissionError:
+        raise SystemExit(
+            f"not allowed to bind {args.host}:{port}. Ports below 1024 need "
+            f"root; run the mock {mode} under sudo."
+        ) from None
+    except OSError as exc:
+        raise SystemExit(
+            f"could not bind {args.host}:{port}: {exc}. Something else is "
+            "probably already listening there."
+        ) from None
 
     if mode == "bmc":
         cert, key = _self_signed_cert()
