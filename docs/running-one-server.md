@@ -222,6 +222,34 @@ max_devices: 1
 `max_devices` is capped again by `NBRECON_MAX_BATCH` at runtime, so the scope
 file cannot raise its own ceiling.
 
+The selectors are `site`, `tenant`, `rack`, `tags`, `devices`, `host_list` and
+`ansible_group`, combined with AND. `devices` and `host_list` take precedence:
+when either is set, the others are only a sanity filter.
+
+#### Scoping to a rack
+
+```yaml
+site: lab-aus
+rack: "RACK-42"
+max_devices: 20
+```
+
+Use the rack name exactly as NetBox shows it. Racks have no slug and their
+names are unique only within a site, so the name is resolved to a rack ID
+before any device is queried. Two failure cases are deliberate, and both stop
+the run rather than widening it:
+
+```
+Error: rack 'NO-SUCH-RACK' not found in NetBox at site 'lab-aus';
+nothing was read and no devices were selected
+
+Error: rack name 'RACK-42' matches 2 racks across sites (lab-aus, lab-tor);
+set 'site' in the scope file to choose one
+```
+
+A rack that exists but holds no devices selects zero devices, which is not an
+error — it is the honest answer.
+
 ---
 
 ## 4. Run it

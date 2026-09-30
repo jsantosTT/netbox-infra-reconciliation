@@ -136,6 +136,7 @@ class NetBoxDevice:
     oob_ip: str | None
     url: str
     last_updated: str | None
+    rack: str | None = None
     custom_fields: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
 

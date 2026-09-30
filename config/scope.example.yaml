@@ -13,6 +13,12 @@ site: ""
 # NetBox tenant slug.
 tenant: ""
 
+# Rack name, exactly as NetBox shows it. Racks have no slug and their names are
+# unique only within a site, so set 'site' as well when the same rack name is
+# used at more than one. A rack that cannot be resolved stops the run rather
+# than quietly widening it.
+rack: ""
+
 # NetBox tags. A device must carry all listed tags.
 tags: []
 
