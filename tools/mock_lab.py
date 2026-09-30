@@ -77,6 +77,7 @@ def initial_state() -> dict[str, Any]:
                 "model": "TT Galaxy (Wormhole)",
             },
             "site": {"id": 1, "slug": "lab-aus", "name": "Lab AUS"},
+            "rack": {"id": 12, "name": "RACK-42"},
             "status": {"value": "active", "label": "Active"},
             "primary_ip4": None,
             "oob_ip": {"id": 55, "address": "127.0.0.1/32"},
@@ -108,6 +109,13 @@ def initial_state() -> dict[str, Any]:
         "device_types": [
             {"id": 7, "slug": "tt-galaxy-wormhole", "model": "TT Galaxy (Wormhole)"},
             {"id": 9, "slug": "tt-galaxy-blackhole", "model": "TT Galaxy (Blackhole)"},
+        ],
+        # Two sites share a rack name, so scoping by an ambiguous rack can be
+        # rehearsed as well as the happy path.
+        "racks": [
+            {"id": 12, "name": "RACK-42", "site": {"id": 1, "slug": "lab-aus"}},
+            {"id": 13, "name": "RACK-42", "site": {"id": 2, "slug": "lab-tor"}},
+            {"id": 14, "name": "RACK-07", "site": {"id": 1, "slug": "lab-aus"}},
         ],
         "journal": [],
     }
@@ -337,6 +345,16 @@ class _Handler(BaseHTTPRequestHandler):
             ])
             return
 
+        if path == "/api/dcim/racks/":
+            names = set(query.get("name", []))
+            sites = set(query.get("site", []))
+            self._page([
+                r for r in self.state["racks"]
+                if (not names or r["name"] in names)
+                and (not sites or r["site"]["slug"] in sites)
+            ])
+            return
+
         if path == "/api/dcim/device-types/":
             slugs = set(query.get("slug", []))
             self._page([
@@ -357,6 +375,9 @@ class _Handler(BaseHTTPRequestHandler):
             return []
         tags = query.get("tag")
         if tags and not set(tags).issubset({t["slug"] for t in device["tags"]}):
+            return []
+        rack_ids = query.get("rack_id")
+        if rack_ids and str((device.get("rack") or {}).get("id")) not in rack_ids:
             return []
         return [device]
 
