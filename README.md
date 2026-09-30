@@ -88,14 +88,17 @@ mock NetBox and a mock Redfish BMC holding one deliberately drifted server. No
 credentials, nothing real is touched.
 
 ```bash
-./tools/rehearse.sh
+./tools/rehearse.sh            # the full pipeline, stage by stage
+./tools/rehearse.sh --safety   # the same lab, as pass/fail assertions
 ```
 
 It asks for `sudo` once, because Redfish is addressed as
 `https://<bmc-ip>/redfish/v1` and the mock BMC therefore has to hold port 443.
-See [docs/running-one-server.md](docs/running-one-server.md) for what to look
-for, including how to rehearse a failed collection, a tampered plan and a
-mid-run NetBox edit.
+
+`--safety` asserts the invariants above and exits non-zero on any failure. It
+loads `config/ownership.yaml` from the repo rather than a fixture copy, so it
+is the check to run after editing the ownership matrix. See
+[docs/running-one-server.md](docs/running-one-server.md) for the walkthrough.
 
 ## Run
 

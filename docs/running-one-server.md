@@ -10,6 +10,16 @@ it is the only way to see the safety behaviour without risking a real record.
 
 ## 1. Install
 
+You need Python 3.10 or newer, `curl`, `openssl`, and `sudo` rights on the
+machine. The `sudo` is only for the rehearsal, never for a real run.
+
+On macOS, check what `python3` actually is before starting — the system one is
+often 3.9, which is too old:
+
+```bash
+python3 -V        # must be 3.10 or newer; `brew install python@3.12` if not
+```
+
 On the management host:
 
 ```bash
@@ -20,7 +30,7 @@ python3 -m venv .venv
 ./.venv/bin/pip install -e ".[dev]"
 ```
 
-Python 3.10 or newer. Confirm it landed:
+Confirm it landed:
 
 ```bash
 ./.venv/bin/nbrecon --version
@@ -53,7 +63,9 @@ against them.
 ```
 
 It asks for `sudo` once. Redfish is addressed as `https://<bmc-ip>/redfish/v1`
-with no port component, so the mock BMC has to hold port 443.
+with no port component, so the mock BMC has to hold port 443, and ports below
+1024 need root. The mock NetBox takes port 8000; if either is already in use
+the script says so and stops rather than half-starting.
 
 The mock server is drifted in several different ways at once, so one rehearsal
 covers most branches of the ownership matrix:
@@ -81,6 +93,36 @@ To poke at it by hand, leave the mocks running:
 NB=".venv/bin/nbrecon --env-file var/rehearsal/env --config-dir var/rehearsal/config"
 $NB plan --show-all
 ```
+
+### The safety invariants, as assertions
+
+The behaviours that matter most are also a runnable check:
+
+```bash
+./tools/rehearse.sh --safety
+```
+
+```
+== Safety check 4/5  a human editing NetBox mid-run wins
+  PASS  the device is skipped whole
+  PASS  and the reason is reported
+  PASS  the human edit survives
+
+13 passed, 0 failed
+```
+
+It exits non-zero on any failure, and it reads `config/ownership.yaml` from the
+repo rather than a fixture copy — so it is the check to run after editing the
+ownership matrix. Setting `staleness_check: false` there, for instance, makes
+check 4 fail with the apply output that proves it:
+
+```
+  FAIL  the device is skipped whole
+        expected to find: Applied 0 field(s)
+        in: ... Applied 1 field(s) ...
+```
+
+The five checks are walked through individually below.
 
 ### Rehearsals worth doing before you trust it
 
@@ -382,3 +424,24 @@ Re-run `approve`.
 
 **`edited since the snapshot`** — someone changed the device mid-run. Expected
 behaviour; re-run `collect` and `plan`.
+
+### Rehearsal-only problems
+
+**`could not bind 127.0.0.1:8000`** — something else holds the port. Find it
+with `lsof -i :8000`. On macOS, port 5000 and 7000 are taken by AirPlay by
+default, but 8000 usually is not.
+
+**`not allowed to bind 127.0.0.1:443`** — the mock BMC was started without
+root. `rehearse.sh` handles this; you only see it running `mock_lab.py` by hand.
+
+**`openssl could not generate a certificate`** — the mock BMC's throwaway
+certificate failed. The script asks `openssl` for a plain self-signed cert with
+no extensions, which LibreSSL (what macOS ships) accepts. If your `openssl` is
+something unusual, `brew install openssl` and put it ahead on `PATH`.
+
+**`there is no terminal to prompt on`** — the script needs `sudo` and cannot
+ask. Run it from an interactive shell rather than a pipeline or CI step.
+
+**The rehearsal hangs with no output** — an older copy of the script raised the
+`sudo` prompt in a backgrounded process, so it was written to a log instead of
+your terminal. Pull the latest; `sudo` is now settled up front.
