@@ -103,7 +103,7 @@ is the check to run after editing the ownership matrix. See
 ## Run
 
 ```bash
-cp config/scope.example.yaml config/scope.lab.yaml   # edit: site or rack, max_devices
+cp config/scope.example.yaml config/scope.lab.yaml   # edit: site, max_devices
 
 nbrecon preflight
 nbrecon collect --scope-file config/scope.lab.yaml --ansible-facts exports/tt-smi.json
@@ -112,12 +112,6 @@ nbrecon approve --approver ericson
 nbrecon apply
 nbrecon verify
 ```
-
-A scope selects devices by `site`, `tenant`, `rack`, `tags`, `devices`,
-`host_list` or `ansible_group`; at least one is required. Rack names are unique
-only within a site, so set `site` alongside `rack` when the same name is used at
-more than one. Selecting by rack does not make the rack field writable — site,
-rack and U position stay human-only.
 
 Each command defaults to the most recent run; pass `--run-id` to target a
 specific one. Artifacts land in `var/runs/<run-id>/`:

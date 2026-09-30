@@ -17,7 +17,7 @@ from urllib.parse import quote, urljoin
 import requests
 
 from ..config import NetBoxSettings, Scope
-from ..errors import ApplyError, CollectionError, ScopeError
+from ..errors import ApplyError, CollectionError
 from ..models import NetBoxDevice
 
 LOG = logging.getLogger("nbrecon.netbox")
@@ -126,8 +126,6 @@ class NetBoxClient:
                 params["tenant"] = scope.tenant
             if scope.tags:
                 params["tag"] = scope.tags
-            if scope.rack:
-                params["rack_id"] = self.resolve_rack_ids(scope.rack, scope.site)
             raw = self._paginate("api/dcim/devices/", params)
 
         devices = [self._to_device(d) for d in raw]
@@ -136,34 +134,6 @@ class NetBoxClient:
 
     def fetch_device(self, device_id: int) -> NetBoxDevice:
         return self._to_device(self._get(f"api/dcim/devices/{device_id}/"))
-
-    def resolve_rack_ids(self, name: str, site: str = "") -> list[int]:
-        """Turn a rack name into IDs the device filter can use.
-
-        Racks have no slug and their names are unique only within a site, so
-        the name is resolved here instead of being handed to the device filter.
-        An ID means the same thing on every NetBox version.
-        """
-        params: dict[str, Any] = {"name": name}
-        if site:
-            params["site"] = site
-        racks = self._paginate("api/dcim/racks/", params)
-
-        if not racks:
-            where = f" at site {site!r}" if site else ""
-            raise ScopeError(
-                f"rack {name!r} not found in NetBox{where}; "
-                "nothing was read and no devices were selected"
-            )
-        if len(racks) > 1:
-            sites = sorted(
-                str((r.get("site") or {}).get("slug") or "?") for r in racks
-            )
-            raise ScopeError(
-                f"rack name {name!r} matches {len(racks)} racks across sites "
-                f"({', '.join(sites)}); set 'site' in the scope file to choose one"
-            )
-        return [int(racks[0]["id"])]
 
     def find_ip_address(self, address: str) -> dict[str, Any] | None:
         """Look up an existing IPAM entry. The tool never creates IP objects."""
@@ -228,7 +198,6 @@ class NetBoxClient:
         status = raw.get("status") or {}
         primary_ip4 = raw.get("primary_ip4") or {}
         oob = raw.get("oob_ip") or {}
-        rack = raw.get("rack") or {}
         return NetBoxDevice(
             id=int(raw["id"]),
             name=raw.get("name"),
@@ -242,7 +211,6 @@ class NetBoxClient:
             oob_ip=oob.get("address") if isinstance(oob, dict) else None,
             url=raw.get("display_url") or self.device_url(int(raw["id"])),
             last_updated=raw.get("last_updated"),
-            rack=rack.get("name") if isinstance(rack, dict) else None,
             custom_fields=raw.get("custom_fields") or {},
             tags=[t.get("slug", "") for t in (raw.get("tags") or []) if isinstance(t, dict)],
         )

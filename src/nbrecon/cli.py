@@ -246,12 +246,7 @@ def collect(
     client = ctx.netbox()
     console.print(f"[bold]Run {run}[/bold]")
     console.print("Snapshotting NetBox...")
-    try:
-        devices = client.fetch_devices(scope)
-    except NbreconError as exc:
-        # Covers an unresolvable rack as well as NetBox being unreadable.
-        # Nothing has been collected yet, so there is nothing to preserve.
-        raise click.ClickException(str(exc)) from exc
+    devices = client.fetch_devices(scope)
 
     if scope.ansible_group and not ansible_facts:
         raise click.ClickException(
