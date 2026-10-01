@@ -37,6 +37,8 @@ from .inventory import NetworkMap, duplicates, iter_rows, parse_inventory
 from .inventory_audit import AuditResult, ReadOnlyNetBox, audit_rows
 from .models import CollectionStatus, DevicePair, Plan, utcnow
 from .ownership import OwnershipMatrix
+from .report.conflict_log import build_rows as build_conflict_rows
+from .report.conflict_log import render_conflict_csv
 from .report.inventory_report import render_console as render_inventory_console
 from .report.inventory_report import render_markdown as render_inventory_markdown
 from .report.render import render_console, render_markdown
@@ -247,6 +249,11 @@ def preflight(ctx: Context, show_custom_fields: bool) -> None:
     type=click.Path(dir_okay=False),
     help="Write the reviewed seed worklist here as JSON",
 )
+@click.option(
+    "--conflict-log",
+    type=click.Path(dir_okay=False),
+    help="Write row-against-row contradictions here as CSV, for the sheet's owner",
+)
 @click.option("--strict", is_flag=True, help="Exit non-zero if anything needs a human")
 @click.pass_obj
 def audit_inventory(
@@ -257,6 +264,7 @@ def audit_inventory(
     offline: bool,
     out: str | None,
     seed_file: str | None,
+    conflict_log: str | None,
     strict: bool,
 ) -> None:
     """Compare the Cloud Resources export against NetBox. Writes nothing.
@@ -305,13 +313,23 @@ def audit_inventory(
     if not offline:
         client = ReadOnlyNetBox(ctx.netbox())
         console.print(f"Reading NetBox at {ctx.settings.netbox.url} (read-only)...")
+        # Hosts in a contested serial group are fetched by name even when the
+        # status filter excluded them: resolving the group needs every member,
+        # and a missing one would read as "NetBox does not know this host".
+        contested_hosts = [
+            r.hostname for g in dup_serials if not g.historical for r in g.live_rows
+        ]
         try:
             devices = client.fetch_devices_by("serial", [r.serial for r in selected if r.serial])
-            devices += client.fetch_devices_by("name", [r.hostname for r in selected])
+            devices += client.fetch_devices_by(
+                "name", [r.hostname for r in selected] + contested_hosts
+            )
         except NbreconError as exc:
             raise click.ClickException(str(exc)) from exc
         unique = list({d.id: d for d in devices}.values())
-        audit = audit_rows(selected, unique, networks, live_collisions, client)
+        audit = audit_rows(
+            selected, unique, networks, live_collisions, client, dup_serials=dup_serials
+        )
 
     render_inventory_console(
         parse, selected, dup_hostnames, dup_serials, dup_bmc, networks, bad_networks, audit, console
@@ -323,6 +341,16 @@ def audit_inventory(
     if out:
         Path(out).write_text(markdown, encoding="utf-8")
         console.print(f"Report written to {out}")
+
+    if conflict_log:
+        rows = build_conflict_rows(dup_hostnames, dup_bmc, dup_serials, audit)
+        Path(conflict_log).write_text(render_conflict_csv(rows), encoding="utf-8")
+        hosts = len({r["hostname"] for r in rows})
+        console.print(
+            f"Conflict log written to {conflict_log}: {len(rows)} row(s) across {hosts} host(s)"
+            if rows
+            else f"Conflict log written to {conflict_log}: no conflicts found"
+        )
 
     if seed_file and audit is not None:
         payload = {

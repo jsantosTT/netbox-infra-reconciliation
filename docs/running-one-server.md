@@ -455,7 +455,49 @@ Useful options:
 | `--offline` | Spreadsheet checks only; never contacts NetBox |
 | `--out PATH` | Write the full Markdown report, with per-row detail |
 | `--seed-file PATH` | Write the reviewed worklist as JSON |
+| `--conflict-log PATH` | Write row-against-row contradictions as CSV, for the sheet's owner |
 | `--strict` | Exit non-zero if anything needs a human |
+
+### A serial two live rows both claim
+
+The sheet is edited by duplicating a row and changing the hostname, so a serial
+occasionally ends up on two machines. If one of the rows is decommissioned that
+is a replacement record and is ignored. If both are in service, the serial
+identifies neither, and the audit refuses to match either row rather than
+letting the duplicate resolve to whichever single device happens to carry it.
+Without that refusal the second row binds, silently, to its neighbour's device.
+
+Each contested group is then resolved by looking every host up in NetBox **by
+name** — not by the serial, which is the field in dispute — producing one of:
+
+| Verdict | Meaning | What it costs to fix |
+| --- | --- | --- |
+| `sheet-error` | NetBox already holds a distinct serial per host | A spreadsheet edit. No hardware access |
+| `netbox-agrees` | NetBox carries the same duplicate | Read the serial from the hardware over Redfish |
+| `undecidable` | NetBox has a serial for fewer than two of the hosts | Depends on why the host is missing |
+
+The split matters because the two outcomes have very different costs, and they
+were previously the same finding.
+
+### The conflict log
+
+`--conflict-log` writes a flat CSV for whoever maintains the spreadsheet, who
+may never run this tool: one row per affected host, with the line number, what
+the sheet says, what NetBox says, the verdict and the action. Rows needing
+hardware are listed first, since they are the only ones the sheet's owner
+cannot resolve alone.
+
+```bash
+nbrecon audit-inventory ~/Downloads/servers.csv --conflict-log var/conflicts.csv
+```
+
+It covers contradictions between rows — duplicated serials, duplicated
+hostnames, and BMC addresses claimed by two live hosts. A cell that merely needs
+a decision, such as `DHCP` in an address column, stays in the audit report
+instead: it is ambiguous rather than contradictory. Under `--offline` the
+duplicate serials are still listed, with every verdict recorded as
+`undecidable`, rather than leaving the column blank and implying nothing is
+wrong.
 
 ### What it reads, and what it refuses to
 

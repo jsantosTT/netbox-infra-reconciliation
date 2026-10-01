@@ -137,13 +137,17 @@ and which gaps could be filled safely.
 ```bash
 nbrecon audit-inventory servers.csv --offline            # spreadsheet only, no credentials
 nbrecon audit-inventory servers.csv --out audit.md       # compare against NetBox
+nbrecon audit-inventory servers.csv --conflict-log c.csv # contradictions, for the sheet's owner
 ```
 
 It writes nothing: the NetBox client it holds has its write methods removed, so
 it cannot. Serial is still the only identity, a hostname-only match is reported
 as a suggestion, and an address is only called seedable when NetBox's field is
 empty, the address sits in a known BMC range, no other live host claims it, and
-an unassigned IPAM entry already exists. See
+an unassigned IPAM entry already exists. A serial claimed by two rows that are
+both in service identifies neither, so neither is matched; each such group is
+resolved against NetBox into a spreadsheet error, a genuine hardware conflict,
+or undecidable. See
 [docs/running-one-server.md](docs/running-one-server.md).
 
 A scope selects devices by `site`, `tenant`, `rack`, `tags`, `devices`,
