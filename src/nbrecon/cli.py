@@ -11,6 +11,7 @@ approval file whose digest matches the plan.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,10 +33,16 @@ from .config import CustomFieldMap, Scope, Settings, SkuMap
 from .correlate import correlate, probe_address
 from .diff import DeviceContext, DiffEngine
 from .errors import NbreconError, ScopeError
+from .inventory import NetworkMap, duplicates, iter_rows, parse_inventory
+from .inventory_audit import AuditResult, ReadOnlyNetBox, audit_rows
 from .models import CollectionStatus, DevicePair, Plan, utcnow
 from .ownership import OwnershipMatrix
+from .report.inventory_report import render_console as render_inventory_console
+from .report.inventory_report import render_markdown as render_inventory_markdown
 from .report.render import render_console, render_markdown
+from .report.snapshot_report import render_console as render_snapshot_console
 from .runstore import RunStore
+from .snapshot import summarise, to_csv, to_payload
 from .state import (
     dump_collection,
     dump_pairs,
@@ -219,6 +226,200 @@ def preflight(ctx: Context, show_custom_fields: bool) -> None:
 
     if not ok:
         sys.exit(1)
+
+
+# --- audit-inventory ------------------------------------------------------
+@main.command("audit-inventory")
+@click.argument("inventory_csv", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--status",
+    "statuses",
+    multiple=True,
+    default=("In Use",),
+    show_default=True,
+    help="Spreadsheet statuses to audit; repeat for more",
+)
+@click.option("--all-statuses", is_flag=True, help="Audit every row regardless of status")
+@click.option("--offline", is_flag=True, help="Check the spreadsheet only; do not read NetBox")
+@click.option("--out", type=click.Path(dir_okay=False), help="Write the Markdown report here")
+@click.option(
+    "--seed-file",
+    type=click.Path(dir_okay=False),
+    help="Write the reviewed seed worklist here as JSON",
+)
+@click.option("--strict", is_flag=True, help="Exit non-zero if anything needs a human")
+@click.pass_obj
+def audit_inventory(
+    ctx: Context,
+    inventory_csv: str,
+    statuses: tuple[str, ...],
+    all_statuses: bool,
+    offline: bool,
+    out: str | None,
+    seed_file: str | None,
+    strict: bool,
+) -> None:
+    """Compare the Cloud Resources export against NetBox. Writes nothing.
+
+    Answers three questions: what is wrong with the spreadsheet, what does
+    NetBox not know that the sheet does, and which of those gaps could be
+    filled safely. It never writes to NetBox, and the client it holds has its
+    write methods removed so it cannot.
+    """
+    source = Path(inventory_csv)
+    try:
+        parse = parse_inventory(source)
+    except NbreconError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    selected = list(iter_rows(parse.rows, () if all_statuses else statuses))
+    if not selected:
+        raise click.ClickException(
+            f"no rows with status {', '.join(statuses)!r}; pass --all-statuses or a "
+            "different --status"
+        )
+
+    # Duplicates are derived from every row, not the selected ones: a retired
+    # row is what tells us a repeated BMC address is a rename rather than a
+    # live conflict.
+    dup_hostnames = duplicates(parse.rows, "hostname")
+    dup_serials = duplicates(parse.rows, "serial")
+    dup_bmc = duplicates(parse.rows, "bmc_ip")
+    live_collisions = {g.value for g in dup_bmc if not g.historical}
+
+    networks_path = ctx.settings.config_dir / "bmc_networks.yaml"
+    networks = NetworkMap.load(networks_path) if networks_path.is_file() else NetworkMap()
+
+    bad_networks: list[tuple[Any, str]] = []
+    if networks.configured:
+        for row in selected:
+            if not row.bmc_ip:
+                continue
+            found = networks.classify(row.bmc_ip)
+            if found is None:
+                bad_networks.append((row, "no known network"))
+            elif not found.is_bmc:
+                bad_networks.append((row, f"{found.name} (not a BMC network)"))
+
+    audit: AuditResult | None = None
+    if not offline:
+        client = ReadOnlyNetBox(ctx.netbox())
+        console.print(f"Reading NetBox at {ctx.settings.netbox.url} (read-only)...")
+        try:
+            devices = client.fetch_devices_by("serial", [r.serial for r in selected if r.serial])
+            devices += client.fetch_devices_by("name", [r.hostname for r in selected])
+        except NbreconError as exc:
+            raise click.ClickException(str(exc)) from exc
+        unique = list({d.id: d for d in devices}.values())
+        audit = audit_rows(selected, unique, networks, live_collisions, client)
+
+    render_inventory_console(
+        parse, selected, dup_hostnames, dup_serials, dup_bmc, networks, bad_networks, audit, console
+    )
+
+    markdown = render_inventory_markdown(
+        str(source), parse, selected, dup_bmc, bad_networks, audit
+    )
+    if out:
+        Path(out).write_text(markdown, encoding="utf-8")
+        console.print(f"Report written to {out}")
+
+    if seed_file and audit is not None:
+        payload = {
+            "generated_at": utcnow().isoformat(),
+            "source": str(source),
+            "netbox_url": ctx.settings.netbox.url,
+            "ready": [
+                {
+                    "hostname": s.hostname,
+                    "serial": s.serial,
+                    "address": s.address,
+                    "network": s.network,
+                    "device_id": s.device_id,
+                    "device_url": s.device_url,
+                    "ipam_state": s.ipam_state,
+                }
+                for s in audit.ready_seeds
+            ],
+            "blocked": [
+                {"hostname": a.row.hostname, "reasons": a.blockers}
+                for a in audit.audits
+                if a.blockers and a.row.bmc_ip
+            ],
+        }
+        Path(seed_file).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        console.print(f"Seed worklist written to {seed_file}")
+    elif seed_file:
+        console.print("[yellow]--seed-file needs NetBox; skipped because of --offline[/yellow]")
+
+    if strict and (live_collisions or parse.issues):
+        sys.exit(1)
+
+
+# --- snapshot -------------------------------------------------------------
+@main.command()
+@click.option(
+    "--scope-file", type=click.Path(exists=True, dir_okay=False), required=True
+)
+@click.option("--json", "json_out", type=click.Path(dir_okay=False), help="Write JSON here")
+@click.option("--csv", "csv_out", type=click.Path(dir_okay=False), help="Write CSV here")
+@click.option("--limit", type=int, default=0, help="Stop after N devices (0 = no limit)")
+@click.option("--quiet", is_flag=True, help="Summary only; do not list every device")
+@click.pass_obj
+def snapshot(
+    ctx: Context,
+    scope_file: str,
+    json_out: str | None,
+    csv_out: str | None,
+    limit: int,
+    quiet: bool,
+) -> None:
+    """Read NetBox for a scope and print it. Nothing else is contacted.
+
+    No Redfish, no Prometheus, no Jira, no run directory and no run-history
+    entry. The only credentials used are NBRECON_NETBOX_URL and
+    NBRECON_NETBOX_TOKEN, which makes this the cheapest way to prove the
+    NetBox half of the configuration works.
+    """
+    try:
+        scope = Scope.from_file(Path(scope_file))
+        # Only the selector check: max_devices caps how much a run may write,
+        # and this run cannot write. Use --limit to bound the read instead.
+        scope.require_selector()
+    except ScopeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    try:
+        # Building the client is inside the try as well: missing credentials
+        # raise here, and that is an operator mistake, not a crash.
+        client = ReadOnlyNetBox(ctx.netbox())
+        devices = client.fetch_devices(scope)
+    except NbreconError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if limit > 0 and len(devices) > limit:
+        console.print(
+            f"[yellow]{len(devices)} device(s) in scope; showing the first {limit}"
+            " (--limit)[/yellow]"
+        )
+        devices = devices[:limit]
+
+    summary = summarise(devices)
+    render_snapshot_console(
+        devices, summary, ctx.settings.netbox.url, scope.as_dict(), console,
+        show_devices=not quiet,
+    )
+
+    if json_out:
+        payload = to_payload(
+            scope.as_dict(), ctx.settings.netbox.url, devices, utcnow().isoformat()
+        )
+        Path(json_out).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        console.print(f"JSON written to {json_out}")
+
+    if csv_out:
+        Path(csv_out).write_text(to_csv(devices), encoding="utf-8")
+        console.print(f"CSV written to {csv_out}")
 
 
 # --- collect --------------------------------------------------------------

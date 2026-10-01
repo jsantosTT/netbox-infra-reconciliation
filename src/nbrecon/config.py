@@ -297,7 +297,13 @@ class Scope:
             seen.setdefault(n, None)
         return list(seen)
 
-    def validate(self, max_batch: int) -> None:
+    def require_selector(self) -> None:
+        """At least one selector, for reads as well as writes.
+
+        Separate from the batch cap because the two guard different things: an
+        unscoped query is refused everywhere, while ``max_devices`` bounds how
+        much a single run may *write* and so does not apply to a pure read.
+        """
         if not any(
             [
                 self.site,
@@ -313,6 +319,9 @@ class Scope:
                 "refusing to run without a scope: set at least one of "
                 "site, tenant, rack, tags, devices, host_list or ansible_group"
             )
+
+    def validate(self, max_batch: int) -> None:
+        self.require_selector()
         if self.max_devices < 1:
             raise ScopeError("max_devices must be at least 1")
         if self.max_devices > max_batch:

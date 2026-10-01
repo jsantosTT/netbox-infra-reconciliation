@@ -1,0 +1,31 @@
+# Which address ranges hold BMCs, and which emphatically do not.
+#
+# Used by 'nbrecon audit-inventory' to check that a cell labelled "BMC IP" is
+# really a BMC address. The failure this catches is a host management address
+# recorded in the BMC column: the tool would open a Redfish session against the
+# host OS and hand it the BMC credentials.
+#
+# Copy to config/bmc_networks.yaml and fill in from the Networks sheet of the
+# Cloud Resources workbook, which is the authority for these ranges. The real
+# file is gitignored, because a repository is not the right place to publish
+# the network layout.
+#
+#   cp config/bmc_networks.example.yaml config/bmc_networks.yaml
+#
+# The ranges below are placeholders and match nothing real. The check is
+# skipped entirely when config/bmc_networks.yaml is absent, and the report says
+# so rather than implying the addresses passed.
+
+# Every range a BMC is legitimately reachable on. Anything here is allowed to
+# be seeded into NetBox as an OOB address.
+bmc:
+  - { name: Example BMC net, cidr: 10.0.0.0/24 }
+  - { name: Example lab BMC, cidr: 10.0.1.0/24 }
+
+# Ranges that are definitely not BMCs. Listing them is optional: an address
+# matching nothing at all is already reported as unknown. They exist so the
+# report can say which network an address really belongs to, which is usually
+# enough for a human to see what went wrong.
+other:
+  - { name: Example host management, cidr: 10.0.10.0/24 }
+  - { name: Example storage, cidr: 10.0.11.0/24 }
