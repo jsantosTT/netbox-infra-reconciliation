@@ -20,7 +20,7 @@ from typing import Any
 
 from .collect.netbox import NetBoxClient
 from .errors import SafetyViolation
-from .inventory import InventoryRow, NetworkMap
+from .inventory import DuplicateGroup, InventoryRow, NetworkMap
 from .models import NetBoxDevice
 
 # Verdicts for one field on one row.
@@ -34,6 +34,12 @@ BY_SERIAL = "serial"
 BY_HOSTNAME = "hostname"
 UNMATCHED = "none"
 AMBIGUOUS = "ambiguous"
+
+# What a serial shared by several live sheet rows turns out to mean once NetBox
+# has been asked about each host separately.
+SHEET_ERROR = "sheet-error"
+NETBOX_AGREES = "netbox-agrees"
+UNDECIDABLE = "undecidable"
 
 DeviceIndex = dict[str, list["NetBoxDevice"]]
 
@@ -70,6 +76,49 @@ class FieldComparison:
     sheet: str | None
     netbox: str | None
     verdict: str
+
+
+@dataclass(frozen=True)
+class DuplicateMember:
+    """One host from a duplicated-serial group, with what NetBox says about it."""
+
+    hostname: str
+    status: str
+    sheet_serial: str
+    line: int = 0
+    netbox_serial: str | None = None
+    netbox_name: str | None = None
+    netbox_url: str = ""
+    netbox_id: int | None = None
+    lookup: str = "found"  # found | absent | several
+
+    @property
+    def usable(self) -> bool:
+        """Did NetBox give one device carrying a serial we can compare?"""
+        return self.lookup == "found" and bool((self.netbox_serial or "").strip())
+
+
+@dataclass(frozen=True)
+class DuplicateResolution:
+    """What a serial shared by several live sheet rows actually means.
+
+    The sheet says two machines are one. NetBox is asked about each host
+    independently, and the answer decides whether this is a typing mistake or
+    something that needs a hand on the hardware.
+    """
+
+    value: str
+    verdict: str
+    detail: str
+    members: tuple[DuplicateMember, ...] = ()
+
+    @property
+    def action(self) -> str:
+        if self.verdict == SHEET_ERROR:
+            return "Correct the spreadsheet; NetBox already holds distinct serials."
+        if self.verdict == NETBOX_AGREES:
+            return "Read the serial from the hardware; both sources carry the duplicate."
+        return "Cannot be settled from NetBox; see the detail."
 
 
 @dataclass
@@ -118,6 +167,15 @@ class AuditResult:
     audits: list[RowAudit] = field(default_factory=list)
     unmatched_devices: list[NetBoxDevice] = field(default_factory=list)
     netbox_read: int = 0
+    duplicate_serials: list[DuplicateResolution] = field(default_factory=list)
+
+    @property
+    def sheet_errors(self) -> list[DuplicateResolution]:
+        return [d for d in self.duplicate_serials if d.verdict == SHEET_ERROR]
+
+    @property
+    def hardware_conflicts(self) -> list[DuplicateResolution]:
+        return [d for d in self.duplicate_serials if d.verdict == NETBOX_AGREES]
 
     @property
     def matched(self) -> list[RowAudit]:
@@ -164,25 +222,126 @@ def index_devices(devices: list[NetBoxDevice]) -> tuple[DeviceIndex, DeviceIndex
     return by_serial, by_name
 
 
+def resolve_duplicate_serials(
+    groups: list[DuplicateGroup], by_name: DeviceIndex
+) -> list[DuplicateResolution]:
+    """Ask NetBox what each host in a duplicated-serial group really is.
+
+    Hosts are looked up by name, deliberately. The serial is the field under
+    dispute, so using it to find the device would assume the answer: the
+    duplicated value would simply lead back to whichever single device happens
+    to carry it, and both rows would appear to agree.
+
+    Only groups with more than one row still in service are considered. A
+    serial repeated across one live row and several retired ones is a
+    replacement record, which ``DuplicateGroup.historical`` already covers.
+    """
+    resolutions: list[DuplicateResolution] = []
+    for group in groups:
+        if group.historical:
+            continue
+        members = tuple(_describe_member(row, by_name) for row in group.live_rows)
+        resolutions.append(_verdict(group.value, members))
+    return resolutions
+
+
+def _describe_member(row: InventoryRow, by_name: DeviceIndex) -> DuplicateMember:
+    found = by_name.get(row.hostname.strip().lower(), [])
+    if len(found) == 1:
+        device = found[0]
+        return DuplicateMember(
+            hostname=row.hostname,
+            status=row.status,
+            sheet_serial=row.serial or "",
+            line=row.line,
+            netbox_serial=device.serial or None,
+            netbox_name=device.name,
+            netbox_url=device.url or "",
+            netbox_id=device.id,
+            lookup="found",
+        )
+    return DuplicateMember(
+        hostname=row.hostname,
+        status=row.status,
+        sheet_serial=row.serial or "",
+        line=row.line,
+        lookup="absent" if not found else "several",
+    )
+
+
+def _verdict(value: str, members: tuple[DuplicateMember, ...]) -> DuplicateResolution:
+    usable = [m for m in members if m.usable]
+    if len(usable) < 2:
+        missing = [m.hostname for m in members if not m.usable]
+        return DuplicateResolution(
+            value=value,
+            verdict=UNDECIDABLE,
+            detail=(
+                "NetBox has a serial for fewer than two of these hosts; no serial on "
+                f"record for {', '.join(missing)}"
+            ),
+            members=members,
+        )
+
+    seen: dict[str, list[str]] = {}
+    for member in usable:
+        seen.setdefault((member.netbox_serial or "").strip().lower(), []).append(member.hostname)
+
+    shared = {k: v for k, v in seen.items() if len(v) > 1}
+    if shared:
+        pairs = "; ".join(f"{', '.join(hosts)} both hold {k}" for k, hosts in shared.items())
+        return DuplicateResolution(
+            value=value,
+            verdict=NETBOX_AGREES,
+            detail=f"NetBox carries the duplicate too ({pairs})",
+            members=members,
+        )
+
+    return DuplicateResolution(
+        value=value,
+        verdict=SHEET_ERROR,
+        detail=(
+            "NetBox holds a distinct serial for each host ("
+            + ", ".join(f"{m.hostname}={m.netbox_serial}" for m in usable)
+            + ")"
+        ),
+        members=members,
+    )
+
+
 def audit_rows(
     rows: list[InventoryRow],
     devices: list[NetBoxDevice],
     networks: NetworkMap,
     live_collisions: set[str],
     client: ReadOnlyNetBox | None = None,
+    dup_serials: list[DuplicateGroup] | None = None,
 ) -> AuditResult:
     """Match every row, compare the fields, and decide what is seedable."""
     by_serial, by_name = index_devices(devices)
+    groups = dup_serials or []
     result = AuditResult(netbox_read=len(devices))
+    result.duplicate_serials = resolve_duplicate_serials(groups, by_name)
+    # Folded once here so every row lookup is a set membership test.
+    contested = {g.value.strip().lower() for g in groups if not g.historical}
     seen_device_ids: set[int] = set()
 
     for row in rows:
-        audit = _audit_row(row, by_serial, by_name)
+        audit = _audit_row(row, by_serial, by_name, contested)
         if audit.device is not None:
             seen_device_ids.add(audit.device.id)
         _decide_seed(audit, networks, live_collisions, client)
         result.audits.append(audit)
 
+    # A contested row is deliberately left unmatched, which would otherwise push
+    # its device into "NetBox devices with no sheet row" -- the opposite of true,
+    # since the sheet names it twice.
+    seen_device_ids |= {
+        m.netbox_id
+        for res in result.duplicate_serials
+        for m in res.members
+        if m.netbox_id is not None
+    }
     result.unmatched_devices = [d for d in devices if d.id not in seen_device_ids]
     return result
 
@@ -191,9 +350,23 @@ def _audit_row(
     row: InventoryRow,
     by_serial: dict[str, list[NetBoxDevice]],
     by_name: dict[str, list[NetBoxDevice]],
+    contested: set[str] | None = None,
 ) -> RowAudit:
+    contested = contested or set()
     if row.serial:
-        matches = by_serial.get(row.serial.strip().lower(), [])
+        folded = row.serial.strip().lower()
+        # A serial two live rows both claim identifies neither of them. Without
+        # this the duplicate resolves to the one device that genuinely carries
+        # it, and the other row is bound, silently and confidently, to its
+        # neighbour's device.
+        if folded in contested:
+            audit = RowAudit(row=row, match=AMBIGUOUS)
+            audit.blockers.append(
+                f"serial {row.serial} is claimed by more than one live row in the sheet, "
+                "so it cannot identify a device; fix the export first"
+            )
+            return audit
+        matches = by_serial.get(folded, [])
         if len(matches) == 1:
             return _with_comparisons(RowAudit(row=row, match=BY_SERIAL, device=matches[0]))
         if len(matches) > 1:

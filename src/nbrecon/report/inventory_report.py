@@ -16,15 +16,19 @@ from ..inventory_audit import (
     BY_HOSTNAME,
     BY_SERIAL,
     DIFFER,
+    NETBOX_AGREES,
     NETBOX_EMPTY,
+    SHEET_ERROR,
+    UNDECIDABLE,
     UNMATCHED,
     AuditResult,
+    DuplicateMember,
 )
 
 MATCH_LABEL = {
     BY_SERIAL: "matched on serial",
     BY_HOSTNAME: "matched on hostname only",
-    AMBIGUOUS: "serial matches several devices",
+    AMBIGUOUS: "serial cannot identify one device",
     UNMATCHED: "no NetBox device",
 }
 
@@ -111,16 +115,13 @@ def render_console(
             "not acted on either way.\n"
         )
 
-    for title, groups in (
-        ("Duplicate hostnames", dup_hostnames),
-        ("Duplicate serials", dup_serials),
-    ):
-        if not groups:
-            continue
-        console.rule(title)
-        for group in groups:
+    if dup_hostnames:
+        console.rule("Duplicate hostnames")
+        for group in dup_hostnames:
             console.print(f"  [bold]{group.value}[/bold]  {group.describe()}")
         console.print()
+
+    _render_duplicate_serials(console, dup_serials, audit)
 
     console.rule("BMC addresses outside a BMC network")
     if not networks.configured:
@@ -146,6 +147,87 @@ def render_console(
         return
 
     _render_netbox(console, audit)
+
+
+def _render_duplicate_serials(
+    console: Console,
+    dup_serials: list[DuplicateGroup],
+    audit: AuditResult | None,
+) -> None:
+    """Duplicated serials, split by what NetBox says each one means.
+
+    The split is the point. "Two rows share a serial" sends someone to a
+    datacenter; "two rows share a serial and NetBox already knows they differ"
+    is a spreadsheet edit. They were previously the same finding.
+    """
+    live = [g for g in dup_serials if not g.historical]
+    historical = [g for g in dup_serials if g.historical]
+
+    if historical:
+        console.rule("Serials reused after a replacement")
+        console.print(
+            f"{len(historical)} serial(s) appear on several rows where only one is still "
+            "in service. That reads as a record kept after a swap, and is not acted on.\n"
+        )
+
+    if not live:
+        return
+
+    if audit is None:
+        console.rule("Serials claimed by more than one live host")
+        console.print("Not resolved: --offline, so NetBox was not consulted.\n")
+        for group in live:
+            console.print(f"  [bold]{group.value}[/bold]  {group.describe()}")
+        console.print()
+        return
+
+    for verdict, heading, blurb in (
+        (
+            NETBOX_AGREES,
+            "[bold red]Serial conflicts NetBox cannot settle",
+            "NetBox carries the same duplicate, so neither source can say which machine "
+            "is which. The serial has to be read from the hardware.",
+        ),
+        (
+            SHEET_ERROR,
+            "Spreadsheet errors NetBox already disproves",
+            "NetBox holds a distinct serial for each of these hosts, so the duplicate is "
+            "in the export alone. No hardware access needed; correct the sheet.",
+        ),
+        (
+            UNDECIDABLE,
+            "Duplicated serials that could not be resolved",
+            "NetBox did not return a serial for enough of these hosts to compare.",
+        ),
+    ):
+        found = [d for d in audit.duplicate_serials if d.verdict == verdict]
+        if not found:
+            continue
+        console.rule(heading)
+        console.print(blurb + "\n")
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Sheet serial", overflow="fold")
+        table.add_column("Host")
+        table.add_column("Status")
+        table.add_column("NetBox serial", overflow="fold")
+        for res in found:
+            for index, member in enumerate(res.members):
+                table.add_row(
+                    res.value if index == 0 else "",
+                    member.hostname,
+                    member.status,
+                    _member_serial(member),
+                )
+        console.print(table)
+        console.print()
+
+
+def _member_serial(member: DuplicateMember) -> str:
+    if member.lookup == "absent":
+        return "[dim]no such device in NetBox[/dim]"
+    if member.lookup == "several":
+        return "[dim]several NetBox devices with this name[/dim]"
+    return member.netbox_serial or "[dim]empty in NetBox[/dim]"
 
 
 def _render_netbox(console: Console, audit: AuditResult) -> None:
@@ -234,6 +316,32 @@ def _render_seeds(console: Console, audit: AuditResult) -> None:
     console.print(table)
 
 
+def _markdown_duplicate_serials(audit: AuditResult) -> list[str]:
+    if not audit.duplicate_serials:
+        return []
+    lines = [
+        "## Serials claimed by more than one live host",
+        "",
+        "Each group was resolved by looking every host up in NetBox **by name**, since "
+        "the serial is the field in dispute.",
+        "",
+        "| Sheet serial | Verdict | Host | Status | NetBox serial | What to do |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    order = {NETBOX_AGREES: 0, UNDECIDABLE: 1, SHEET_ERROR: 2}
+    for res in sorted(audit.duplicate_serials, key=lambda r: (order.get(r.verdict, 9), r.value)):
+        for index, member in enumerate(res.members):
+            netbox = member.netbox_serial or f"_{member.lookup}_"
+            lines.append(
+                f"| {res.value if index == 0 else ''} "
+                f"| {res.verdict if index == 0 else ''} "
+                f"| {member.hostname} | {member.status} | {netbox} "
+                f"| {res.action if index == 0 else ''} |"
+            )
+    lines.append("")
+    return lines
+
+
 def render_markdown(
     source: str,
     parse: ParseResult,
@@ -312,6 +420,8 @@ def render_markdown(
             f"| {MATCH_LABEL[key]} | {sum(1 for a in audit.audits if a.match == key)} |"
         )
     lines += [f"| NetBox devices with no sheet row | {len(audit.unmatched_devices)} |", ""]
+
+    lines += _markdown_duplicate_serials(audit)
 
     disagreements = [
         (a, c) for a in audit.audits for c in a.comparisons if c.verdict == DIFFER
