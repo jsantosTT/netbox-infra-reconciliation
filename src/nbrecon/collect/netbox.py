@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urljoin, urlsplit
 
 import requests
 
 from ..config import NetBoxSettings, Scope
-from ..errors import ApplyError, CollectionError, ScopeError
+from ..errors import ApplyError, CollectionError, NbreconError, ScopeError
 from ..models import NetBoxDevice
 
 LOG = logging.getLogger("nbrecon.netbox")
@@ -25,6 +25,63 @@ LOG = logging.getLogger("nbrecon.netbox")
 PAGE_SIZE = 100
 TIMEOUT = 30
 QUERY_CHUNK = 50
+
+
+def _decode(
+    url: str,
+    resp: requests.Response,
+    verb: str = "GET",
+    error: type[NbreconError] = CollectionError,
+) -> dict[str, Any]:
+    """Everything that has to hold before a response counts as NetBox's answer.
+
+    Two checks, both learned against a NetBox sitting behind an SSO proxy.
+
+    A redirect to a *different host* is not a slow API, it is something standing
+    in front of the API. ``requests`` follows redirects by default, so without
+    this the client parses an identity provider's login page as a device list
+    and fails somewhere far from the cause. Same-host redirects stay allowed:
+    NetBox appends a trailing slash.
+
+    A body that is not JSON gets named rather than thrown, because
+    ``resp.json()`` raising inside a collector produces a traceback that
+    mentions neither the proxy, nor the content type, nor what to do next.
+    """
+    if resp.history:
+        origin = urlsplit(url).hostname
+        landed = urlsplit(resp.url).hostname
+        if landed and landed != origin:
+            # On a 302 ``requests`` rewrites the method to GET, so a redirected
+            # write did not merely fail -- it never reached NetBox at all, while
+            # still returning a 200 that reads like success.
+            consequence = (
+                "the API token never reaches NetBox"
+                if verb == "GET"
+                else f"the {verb} never reached NetBox and no change was made"
+            )
+            raise error(
+                f"NetBox {verb} {url} was redirected to {landed}. An SSO proxy is "
+                f"intercepting API requests, so {consequence}. Run from inside the "
+                "network, or ask for the API path to be exempted from the proxy's "
+                "login rule."
+            )
+
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        content_type = resp.headers.get("Content-Type", "unknown")
+        raise error(
+            f"NetBox {verb} {url} returned {resp.status_code} but the body is not JSON "
+            f"(content-type: {content_type}). That usually means a proxy or login page "
+            f"answered instead of NetBox. First 200 characters: {resp.text[:200].strip()!r}"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise error(
+            f"NetBox {verb} {url} returned JSON that is not an object "
+            f"(got {type(payload).__name__}); this is not a NetBox API response"
+        )
+    return payload
 
 
 class NetBoxClient:
@@ -58,7 +115,7 @@ class NetBoxClient:
             raise CollectionError(
                 f"NetBox GET {url} returned {resp.status_code}: {resp.text[:300]}"
             )
-        return resp.json()
+        return _decode(url, resp)
 
     def _paginate(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         params = {**params, "limit": PAGE_SIZE}
@@ -72,7 +129,7 @@ class NetBoxClient:
                 resp.raise_for_status()
             except requests.RequestException as exc:
                 raise CollectionError(f"NetBox pagination failed at {next_url}: {exc}") from exc
-            payload = resp.json()
+            payload = _decode(next_url, resp)
             results.extend(payload.get("results", []))
             next_url = payload.get("next")
         return results
@@ -210,7 +267,7 @@ class NetBoxClient:
             raise ApplyError(f"NetBox PATCH {url} failed: {exc}") from exc
         if resp.status_code >= 400:
             raise ApplyError(f"NetBox PATCH {url} returned {resp.status_code}: {resp.text[:500]}")
-        return resp.json()
+        return _decode(url, resp, verb="PATCH", error=ApplyError)
 
     def patch_interface(self, interface_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         url = self._url(f"api/dcim/interfaces/{interface_id}/")
@@ -220,7 +277,7 @@ class NetBoxClient:
             raise ApplyError(f"NetBox PATCH {url} failed: {exc}") from exc
         if resp.status_code >= 400:
             raise ApplyError(f"NetBox PATCH {url} returned {resp.status_code}: {resp.text[:500]}")
-        return resp.json()
+        return _decode(url, resp, verb="PATCH", error=ApplyError)
 
     def create_journal_entry(self, device_id: int, comment: str) -> dict[str, Any]:
         url = self._url("api/extras/journal-entries/")
@@ -238,7 +295,7 @@ class NetBoxClient:
             raise ApplyError(
                 f"NetBox journal entry returned {resp.status_code}: {resp.text[:300]}"
             )
-        return resp.json()
+        return _decode(url, resp, verb="POST", error=ApplyError)
 
     # --- mapping ----------------------------------------------------------
     def _to_device(self, raw: dict[str, Any]) -> NetBoxDevice:
