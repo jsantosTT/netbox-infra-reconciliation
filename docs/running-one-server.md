@@ -360,6 +360,67 @@ artifact table in the [README](../README.md#run).
 
 ---
 
+## 4a. Just reading NetBox
+
+`snapshot` resolves a scope, reads those devices, and stops. No Redfish, no
+Prometheus, no Jira, no run directory and no run-history entry.
+
+It needs **only** `NBRECON_NETBOX_URL` and `NBRECON_NETBOX_TOKEN`. Every other
+credential defaults to empty and is checked by the command that needs it, so
+this is the cheapest way to prove the NetBox half of your configuration works
+before putting BMC credentials anywhere.
+
+```bash
+cat > .env <<'EOF'
+NBRECON_NETBOX_URL=https://netbox.example.com
+NBRECON_NETBOX_TOKEN=...
+EOF
+chmod 600 .env
+
+printf 'site: aus-lab\nrack: RACK-42\n' > config/scope.yaml
+nbrecon snapshot --scope-file config/scope.yaml
+```
+
+| Option | Effect |
+| --- | --- |
+| `--json PATH` | Full device records plus the summary |
+| `--csv PATH` | One row per device, custom fields as `cf_*` columns |
+| `--limit N` | Stop after N devices |
+| `--quiet` | Summary only; do not list every device |
+
+The summary answers the question the device table cannot:
+
+```
+│ Devices in scope     │    24 │
+│ With a serial        │    22 │
+│ Without a serial     │     2 │
+│ With an OOB IP       │    19 │
+│ Reachable by Redfish │    20 │
+│ Not reachable        │     4 │
+```
+
+A device with neither an OOB address nor a primary IPv4 is never probed, so it
+is invisible to reconciliation however correct the rest of its record is. The
+same goes for a missing or duplicated serial: serial is the only identity, so
+those devices are never matched and never written to. Both are called out
+below the table rather than left for you to infer.
+
+The CSV carries a `probe_address` column holding exactly what Redfish would be
+pointed at, so you can answer "would this device be probed, and at what
+address" without reapplying the rule yourself.
+
+### What the batch cap does and does not do
+
+`snapshot` requires a scope selector, like every other command, but it ignores
+`max_devices`. That cap bounds how much a single run may *write*, and this run
+cannot write; use `--limit` to bound the read instead. An unresolvable or
+ambiguous rack still stops the run exactly as it does in `collect`.
+
+Like the inventory audit, the client is wrapped so its write methods are not
+reachable.
+
+---
+
 ## 4b. Auditing the Cloud Resources export
 
 The tool reaches a BMC at whatever address NetBox holds in `oob_ip`, falling

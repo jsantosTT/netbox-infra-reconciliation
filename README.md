@@ -111,6 +111,22 @@ nbrecon apply
 nbrecon verify
 ```
 
+## Just read NetBox
+
+`snapshot` resolves a scope, reads those devices and stops. No Redfish, no
+Prometheus, no Jira, no run directory, no run-history entry — and no
+credentials beyond `NBRECON_NETBOX_URL` and `NBRECON_NETBOX_TOKEN`, which makes
+it the cheapest way to prove the NetBox half of the configuration works.
+
+```bash
+nbrecon snapshot --scope-file config/scope.yaml
+nbrecon snapshot --scope-file config/scope.yaml --csv devices.csv --quiet
+```
+
+It reports how many devices have no serial and how many have neither an OOB
+address nor a primary IPv4 — the two conditions that make a device invisible to
+reconciliation regardless of what else its record says.
+
 ## Audit the inventory spreadsheet
 
 The tool probes whatever address NetBox holds in `oob_ip`, so a device with

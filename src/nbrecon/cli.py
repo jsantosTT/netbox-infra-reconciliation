@@ -40,7 +40,9 @@ from .ownership import OwnershipMatrix
 from .report.inventory_report import render_console as render_inventory_console
 from .report.inventory_report import render_markdown as render_inventory_markdown
 from .report.render import render_console, render_markdown
+from .report.snapshot_report import render_console as render_snapshot_console
 from .runstore import RunStore
+from .snapshot import summarise, to_csv, to_payload
 from .state import (
     dump_collection,
     dump_pairs,
@@ -352,6 +354,72 @@ def audit_inventory(
 
     if strict and (live_collisions or parse.issues):
         sys.exit(1)
+
+
+# --- snapshot -------------------------------------------------------------
+@main.command()
+@click.option(
+    "--scope-file", type=click.Path(exists=True, dir_okay=False), required=True
+)
+@click.option("--json", "json_out", type=click.Path(dir_okay=False), help="Write JSON here")
+@click.option("--csv", "csv_out", type=click.Path(dir_okay=False), help="Write CSV here")
+@click.option("--limit", type=int, default=0, help="Stop after N devices (0 = no limit)")
+@click.option("--quiet", is_flag=True, help="Summary only; do not list every device")
+@click.pass_obj
+def snapshot(
+    ctx: Context,
+    scope_file: str,
+    json_out: str | None,
+    csv_out: str | None,
+    limit: int,
+    quiet: bool,
+) -> None:
+    """Read NetBox for a scope and print it. Nothing else is contacted.
+
+    No Redfish, no Prometheus, no Jira, no run directory and no run-history
+    entry. The only credentials used are NBRECON_NETBOX_URL and
+    NBRECON_NETBOX_TOKEN, which makes this the cheapest way to prove the
+    NetBox half of the configuration works.
+    """
+    try:
+        scope = Scope.from_file(Path(scope_file))
+        # Only the selector check: max_devices caps how much a run may write,
+        # and this run cannot write. Use --limit to bound the read instead.
+        scope.require_selector()
+    except ScopeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    try:
+        # Building the client is inside the try as well: missing credentials
+        # raise here, and that is an operator mistake, not a crash.
+        client = ReadOnlyNetBox(ctx.netbox())
+        devices = client.fetch_devices(scope)
+    except NbreconError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if limit > 0 and len(devices) > limit:
+        console.print(
+            f"[yellow]{len(devices)} device(s) in scope; showing the first {limit}"
+            " (--limit)[/yellow]"
+        )
+        devices = devices[:limit]
+
+    summary = summarise(devices)
+    render_snapshot_console(
+        devices, summary, ctx.settings.netbox.url, scope.as_dict(), console,
+        show_devices=not quiet,
+    )
+
+    if json_out:
+        payload = to_payload(
+            scope.as_dict(), ctx.settings.netbox.url, devices, utcnow().isoformat()
+        )
+        Path(json_out).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        console.print(f"JSON written to {json_out}")
+
+    if csv_out:
+        Path(csv_out).write_text(to_csv(devices), encoding="utf-8")
+        console.print(f"CSV written to {csv_out}")
 
 
 # --- collect --------------------------------------------------------------
