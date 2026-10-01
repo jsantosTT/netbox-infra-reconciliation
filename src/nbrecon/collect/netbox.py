@@ -24,6 +24,7 @@ LOG = logging.getLogger("nbrecon.netbox")
 
 PAGE_SIZE = 100
 TIMEOUT = 30
+QUERY_CHUNK = 50
 
 
 class NetBoxClient:
@@ -136,6 +137,24 @@ class NetBoxClient:
 
     def fetch_device(self, device_id: int) -> NetBoxDevice:
         return self._to_device(self._get(f"api/dcim/devices/{device_id}/"))
+
+    def fetch_devices_by(self, field_name: str, values: list[str]) -> list[NetBoxDevice]:
+        """Look devices up by repeated ``serial=`` or ``name=`` parameters.
+
+        Sent in chunks because the query string is the limiting factor: a few
+        hundred serials in one URL is rejected by proxies long before NetBox
+        sees it.
+        """
+        if field_name not in ("serial", "name"):
+            raise CollectionError(f"cannot look devices up by {field_name!r}")
+        found: dict[int, NetBoxDevice] = {}
+        unique = list(dict.fromkeys(v for v in values if v))
+        for start in range(0, len(unique), QUERY_CHUNK):
+            chunk = unique[start : start + QUERY_CHUNK]
+            for raw in self._paginate("api/dcim/devices/", {field_name: chunk}):
+                device = self._to_device(raw)
+                found[device.id] = device
+        return sorted(found.values(), key=lambda d: (d.name or "", d.id))
 
     def resolve_rack_ids(self, name: str, site: str = "") -> list[int]:
         """Turn a rack name into IDs the device filter can use.

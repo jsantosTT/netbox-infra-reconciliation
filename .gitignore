@@ -5,6 +5,9 @@
 *.pem
 *.key
 
+# Site network layout, filled in from the Cloud Resources workbook.
+config/bmc_networks.yaml
+
 # Reconciliation artifacts and local state
 var/
 runs/

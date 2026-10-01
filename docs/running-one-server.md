@@ -360,6 +360,96 @@ artifact table in the [README](../README.md#run).
 
 ---
 
+## 4b. Auditing the Cloud Resources export
+
+The tool reaches a BMC at whatever address NetBox holds in `oob_ip`, falling
+back to `primary_ip4`. A device with neither is simply never probed. The Cloud
+Resources workbook knows a lot of those addresses, so `audit-inventory` exists
+to compare the two and produce a reviewed worklist.
+
+It is a reporting command, not a pipeline stage. It creates no run, no plan and
+no approval, and the NetBox client it holds has had its write methods removed,
+so it cannot write even by mistake.
+
+```bash
+# Export the 'Servers' sheet as CSV, header row intact.
+nbrecon audit-inventory ~/Downloads/servers.csv --offline
+```
+
+`--offline` checks the spreadsheet alone and needs no credentials, which makes
+it the right first run. Drop the flag to compare against NetBox:
+
+```bash
+nbrecon audit-inventory ~/Downloads/servers.csv \
+  --out var/inventory-audit.md \
+  --seed-file var/seed-worklist.json
+```
+
+Useful options:
+
+| Option | Effect |
+| --- | --- |
+| `--status "In Use"` | Which spreadsheet statuses to audit. Repeat for more. Defaults to `In Use` |
+| `--all-statuses` | Audit every row, including decommissioned ones |
+| `--offline` | Spreadsheet checks only; never contacts NetBox |
+| `--out PATH` | Write the full Markdown report, with per-row detail |
+| `--seed-file PATH` | Write the reviewed worklist as JSON |
+| `--strict` | Exit non-zero if anything needs a human |
+
+### What it reads, and what it refuses to
+
+Only the NetBox devices the sheet actually mentions are read, looked up by
+serial and by hostname in chunks. Nothing else in NetBox is touched.
+
+Serial remains the only identity. A row that matches only on hostname is
+reported as a suggestion and never reaches the worklist, exactly as in the
+pipeline. Where the sheet and NetBox disagree, the disagreement is reported and
+nothing is proposed: the spreadsheet does not get to overrule NetBox.
+
+Cells are never guessed at. `IP (s)` holding `172.27.107.11, 172.27.28.81`
+yields no address and one finding, because choosing one of the two is how a
+tool ends up authenticating against the wrong machine.
+
+### Why a BMC address might not be seedable
+
+The worklist only contains addresses that cleared every one of these:
+
+1. The row matched a NetBox device **on serial**.
+2. NetBox's `oob_ip` is **empty** — this never overwrites.
+3. The address is inside a **BMC network** (see below).
+4. No other host still in service claims the same address.
+5. An **IPAM entry already exists** for it and belongs to nobody else.
+
+Point 5 is the one that surprises people. `apply` refuses to attach an address
+that has no IPAM object, because the tool never creates IPAM objects:
+
+```
+no IPAM entry for 172.27.24.5; create the IP address in NetBox first
+(nbrecon does not create IPAM objects)
+```
+
+The audit performs the same lookup `apply` does, so what it reports is what
+`apply` would really do rather than a guess at it.
+
+### The BMC network check
+
+Copy `config/bmc_networks.example.yaml` to `config/bmc_networks.yaml` and fill
+it in from the **Networks** sheet of the workbook. The real file is gitignored.
+
+This catches a host management address sitting in the BMC column. Connecting
+there with BMC credentials would hand them to the host OS, so an address
+outside a BMC range is reported and never seeded. With no such file the check
+is skipped and the report says so, rather than implying the addresses passed.
+
+### What it deliberately does not compare
+
+Site, rack and position are `human_only`, and the sheet records them as display
+names while NetBox uses slugs, so comparing them produces noise rather than
+findings. `Model #` needs a `sku_map` entry per model before it means anything.
+Neither is compared today; both are worth revisiting once the mapping exists.
+
+---
+
 ## 5. Widening out
 
 1. One device, `plan` only. Read every section.

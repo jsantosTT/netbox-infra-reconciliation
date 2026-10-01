@@ -80,6 +80,7 @@ is skipped entirely rather than guessed.
 | `config/netbox_fields.yaml` | Logical field key to real NetBox custom field name | Blank; fill after preflight |
 | `config/sku_map.yaml` | Redfish Model/PartNumber to NetBox device type slug | Empty; every SKU reports as unmapped |
 | `config/scope.example.yaml` | Template for a run scope | Copy and edit per site |
+| `config/bmc_networks.example.yaml` | Which ranges hold BMCs, for the inventory audit | Placeholders; fill from the Networks sheet |
 
 ## Rehearse
 
@@ -109,6 +110,25 @@ nbrecon approve --approver ericson
 nbrecon apply
 nbrecon verify
 ```
+
+## Audit the inventory spreadsheet
+
+The tool probes whatever address NetBox holds in `oob_ip`, so a device with
+none is never reached. `audit-inventory` compares the Cloud Resources export
+against NetBox and reports what NetBox is missing, what the two disagree on,
+and which gaps could be filled safely.
+
+```bash
+nbrecon audit-inventory servers.csv --offline            # spreadsheet only, no credentials
+nbrecon audit-inventory servers.csv --out audit.md       # compare against NetBox
+```
+
+It writes nothing: the NetBox client it holds has its write methods removed, so
+it cannot. Serial is still the only identity, a hostname-only match is reported
+as a suggestion, and an address is only called seedable when NetBox's field is
+empty, the address sits in a known BMC range, no other live host claims it, and
+an unassigned IPAM entry already exists. See
+[docs/running-one-server.md](docs/running-one-server.md).
 
 A scope selects devices by `site`, `tenant`, `rack`, `tags`, `devices`,
 `host_list` or `ansible_group`; at least one is required. Rack names are unique

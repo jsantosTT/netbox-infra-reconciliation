@@ -370,6 +370,9 @@ class _Handler(BaseHTTPRequestHandler):
         names = query.get("name")
         if names and device["name"] not in names:
             return []
+        serials = query.get("serial")
+        if serials and device["serial"] not in serials:
+            return []
         sites = query.get("site")
         if sites and device["site"]["slug"] not in sites:
             return []

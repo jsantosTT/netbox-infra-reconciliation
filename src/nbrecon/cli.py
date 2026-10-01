@@ -11,6 +11,7 @@ approval file whose digest matches the plan.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,8 +33,12 @@ from .config import CustomFieldMap, Scope, Settings, SkuMap
 from .correlate import correlate, probe_address
 from .diff import DeviceContext, DiffEngine
 from .errors import NbreconError, ScopeError
+from .inventory import NetworkMap, duplicates, iter_rows, parse_inventory
+from .inventory_audit import AuditResult, ReadOnlyNetBox, audit_rows
 from .models import CollectionStatus, DevicePair, Plan, utcnow
 from .ownership import OwnershipMatrix
+from .report.inventory_report import render_console as render_inventory_console
+from .report.inventory_report import render_markdown as render_inventory_markdown
 from .report.render import render_console, render_markdown
 from .runstore import RunStore
 from .state import (
@@ -218,6 +223,134 @@ def preflight(ctx: Context, show_custom_fields: bool) -> None:
             console.print("[yellow]BMC TLS verification disabled (lab only)[/yellow]")
 
     if not ok:
+        sys.exit(1)
+
+
+# --- audit-inventory ------------------------------------------------------
+@main.command("audit-inventory")
+@click.argument("inventory_csv", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--status",
+    "statuses",
+    multiple=True,
+    default=("In Use",),
+    show_default=True,
+    help="Spreadsheet statuses to audit; repeat for more",
+)
+@click.option("--all-statuses", is_flag=True, help="Audit every row regardless of status")
+@click.option("--offline", is_flag=True, help="Check the spreadsheet only; do not read NetBox")
+@click.option("--out", type=click.Path(dir_okay=False), help="Write the Markdown report here")
+@click.option(
+    "--seed-file",
+    type=click.Path(dir_okay=False),
+    help="Write the reviewed seed worklist here as JSON",
+)
+@click.option("--strict", is_flag=True, help="Exit non-zero if anything needs a human")
+@click.pass_obj
+def audit_inventory(
+    ctx: Context,
+    inventory_csv: str,
+    statuses: tuple[str, ...],
+    all_statuses: bool,
+    offline: bool,
+    out: str | None,
+    seed_file: str | None,
+    strict: bool,
+) -> None:
+    """Compare the Cloud Resources export against NetBox. Writes nothing.
+
+    Answers three questions: what is wrong with the spreadsheet, what does
+    NetBox not know that the sheet does, and which of those gaps could be
+    filled safely. It never writes to NetBox, and the client it holds has its
+    write methods removed so it cannot.
+    """
+    source = Path(inventory_csv)
+    try:
+        parse = parse_inventory(source)
+    except NbreconError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    selected = list(iter_rows(parse.rows, () if all_statuses else statuses))
+    if not selected:
+        raise click.ClickException(
+            f"no rows with status {', '.join(statuses)!r}; pass --all-statuses or a "
+            "different --status"
+        )
+
+    # Duplicates are derived from every row, not the selected ones: a retired
+    # row is what tells us a repeated BMC address is a rename rather than a
+    # live conflict.
+    dup_hostnames = duplicates(parse.rows, "hostname")
+    dup_serials = duplicates(parse.rows, "serial")
+    dup_bmc = duplicates(parse.rows, "bmc_ip")
+    live_collisions = {g.value for g in dup_bmc if not g.historical}
+
+    networks_path = ctx.settings.config_dir / "bmc_networks.yaml"
+    networks = NetworkMap.load(networks_path) if networks_path.is_file() else NetworkMap()
+
+    bad_networks: list[tuple[Any, str]] = []
+    if networks.configured:
+        for row in selected:
+            if not row.bmc_ip:
+                continue
+            found = networks.classify(row.bmc_ip)
+            if found is None:
+                bad_networks.append((row, "no known network"))
+            elif not found.is_bmc:
+                bad_networks.append((row, f"{found.name} (not a BMC network)"))
+
+    audit: AuditResult | None = None
+    if not offline:
+        client = ReadOnlyNetBox(ctx.netbox())
+        console.print(f"Reading NetBox at {ctx.settings.netbox.url} (read-only)...")
+        try:
+            devices = client.fetch_devices_by("serial", [r.serial for r in selected if r.serial])
+            devices += client.fetch_devices_by("name", [r.hostname for r in selected])
+        except NbreconError as exc:
+            raise click.ClickException(str(exc)) from exc
+        unique = list({d.id: d for d in devices}.values())
+        audit = audit_rows(selected, unique, networks, live_collisions, client)
+
+    render_inventory_console(
+        parse, selected, dup_hostnames, dup_serials, dup_bmc, networks, bad_networks, audit, console
+    )
+
+    markdown = render_inventory_markdown(
+        str(source), parse, selected, dup_bmc, bad_networks, audit
+    )
+    if out:
+        Path(out).write_text(markdown, encoding="utf-8")
+        console.print(f"Report written to {out}")
+
+    if seed_file and audit is not None:
+        payload = {
+            "generated_at": utcnow().isoformat(),
+            "source": str(source),
+            "netbox_url": ctx.settings.netbox.url,
+            "ready": [
+                {
+                    "hostname": s.hostname,
+                    "serial": s.serial,
+                    "address": s.address,
+                    "network": s.network,
+                    "device_id": s.device_id,
+                    "device_url": s.device_url,
+                    "ipam_state": s.ipam_state,
+                }
+                for s in audit.ready_seeds
+            ],
+            "blocked": [
+                {"hostname": a.row.hostname, "reasons": a.blockers}
+                for a in audit.audits
+                if a.blockers and a.row.bmc_ip
+            ],
+        }
+        Path(seed_file).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        console.print(f"Seed worklist written to {seed_file}")
+    elif seed_file:
+        console.print("[yellow]--seed-file needs NetBox; skipped because of --offline[/yellow]")
+
+    if strict and (live_collisions or parse.issues):
         sys.exit(1)
 
 
