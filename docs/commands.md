@@ -116,6 +116,24 @@ does, and which of those gaps could be filled safely.
 Duplicates are derived from *every* row, not just the selected statuses: a
 retired row is what distinguishes a reused BMC address from a live collision.
 
+### `tools/snapshot-racks.sh`
+
+```bash
+./tools/snapshot-racks.sh [--site SLUG] [--out-dir DIR] [--max-devices N]
+                          [--env-file FILE] RACK [RACK ...]
+```
+
+A wrapper around `snapshot` for sweeping several racks, writing one CSV per
+rack. Needs the same two NetBox variables and nothing else.
+
+One rack failing does not stop the others. Failures are repeated in a summary
+and set a non-zero exit code, because a sweep that half-worked and said nothing
+is worse than one that stopped. Racks that exist but hold no devices are
+reported separately: that is a success, and also a finding.
+
+`--site` is needed when a rack name exists at more than one site, which NetBox
+permits. Without it the run fails and names the candidate sites.
+
 ### `history`
 
 ```bash
