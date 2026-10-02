@@ -202,6 +202,7 @@ hand-edited plan cannot smuggle a forbidden field past the apply stage.
 ## Documentation
 
 - [docs/running-one-server.md](docs/running-one-server.md) - start here: install, configure, rehearse, then reconcile one server
+- [docs/commands.md](docs/commands.md) - every command and option, and which of them can write
 - [docs/pipeline.md](docs/pipeline.md) - the seven stages and what each guarantees
 - [docs/field-ownership.md](docs/field-ownership.md) - the matrix and its open items
 - [docs/ansible-facts-schema.md](docs/ansible-facts-schema.md) - the tt-smi export contract
